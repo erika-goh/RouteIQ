@@ -1,32 +1,31 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>GoBus Live</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoBus Live</title>
 
-  <!-- Styles -->
-  <link rel="stylesheet" href="css/styles.css" />
-  <link rel="stylesheet" href="css/components.css" />
+    <link rel="stylesheet" href="css/styles.css">
 </head>
 
 <body>
-  <!-- ALL YOUR EXISTING HTML GOES HERE -->
-  <!-- DO NOT CHANGE ANY ELEMENTS OR IDS -->
 
-  <!-- Scripts -->
-  <script src="js/map.js"></script>
-  <script src="js/routing.js"></script>
-  <script src="js/transit.js"></script>
-  <script src="js/alerts.js"></script>
-  <script src="js/stats.js"></script>
-  <script src="js/main.js"></script>
+    <script src="js/state.js"></script>
+    <script src="js/busSchedule.js"></script>
+    <script src="js/stats.js"></script>
+    <script src="js/uiHandlers.js"></script>
+    <script src="js/alerts.js"></script>
+    <script src="js/incidents.js"></script>
+    <script src="js/maps.js"></script>
+    <script src="js/routes.js"></script>
+    <script src="js/navigation.js"></script>
 
-  <!-- Google Maps API (unchanged) -->
-  <script
-    src="https://maps.googleapis.com/maps/api/js?key=YOUR_KEY&libraries=places"
-    async
-    defer
-  ></script>
+    <!-- Google Maps -->
+    <script
+      src="https://maps.googleapis.com/maps/api/js?key=YOUR_KEY&libraries=places&callback=initMap"
+      async
+      defer
+    ></script>
 </body>
 </html>
 
