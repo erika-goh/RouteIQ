@@ -1,0 +1,5 @@
+function handleOriginType() 
+function setOriginStation() 
+function refreshCurrentLocation() 
+function handleDestinationType() 
+function setStationDestination() 
