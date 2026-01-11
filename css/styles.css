@@ -1,0 +1,8 @@
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #020617; color: white; font-family: system-ui, -apple-system, sans-serif; }
+
+.bus-time-option.next-bus {
+    background: rgba(34, 197, 94, 0.1);
+    border-left: 3px solid #22c55e;
+}
