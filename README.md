@@ -2,13 +2,13 @@
 
 RouteIQ is an intelligent, real-time transit planning web application designed to help commuters across the Greater Toronto and Hamilton Area plan faster, more reliable, and more sustainable trips using GO Bus and multimodal transportation.
 
-Built using HTML, CSS, and JavaScript and powered by the Google Maps API, GoBus Live combines live routing, traffic awareness, transit scheduling, and sustainability insights into a single interactive dashboard.
+Built using HTML, CSS, and JavaScript and powered by the Google Maps API, RouteIQ combines live routing, traffic awareness, transit scheduling, and sustainability insights into a single interactive dashboard.
 
 ---
 
 ## Overview
 
-Commuters often know how long a trip takes but not when they should leave to arrive on time. GoBus Live focuses on departure-time intelligence by factoring in live traffic conditions, transit schedules, and routing alternatives to recommend optimal leave times.
+Commuters often know how long a trip takes but not when they should leave to arrive on time. RouteIQ focuses on departure-time intelligence by factoring in live traffic conditions, transit schedules, and routing alternatives to recommend optimal leave times.
 
 The application compares transit, driving, and cycling routes in real time while providing actionable alerts and environmental impact tracking.
 
