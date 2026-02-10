@@ -1,12 +1,12 @@
 // Configuration file for API keys and GO Transit API
 const CONFIG = {
-  GOOGLE_MAPS_API_KEY: "AIzaSyA_qFnB9Zju3GBTVsRief39CSWa2zkLj_8",
-  GEMINI_API_KEY: "AIzaSyCaaRacE9Xu9v9hvoozgSB9GfBhke7MK9k",
+  GOOGLE_MAPS_API_KEY: " ",
+  GEMINI_API_KEY: " ",
 
   // GO Transit API Configuration
   GO_TRANSIT_API: {
     BASE_URL: "https://api.gotransit.com/api",
-    KEY: "30026449",
+    KEY: " ",
     // Common endpoints
     ENDPOINTS: {
       PLAN_TRIP: "/ServiceataGlance/TripPlanner/PlanTrip",
