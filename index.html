@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RouteIQ - AI-Powered Transit Planner</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <div class="logo">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <rect width="32" height="32" rx="8" fill="url(#gradient)" />
+            <path
+              d="M8 12h16M8 16h16M8 20h16"
+              stroke="white"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+            <defs>
+              <linearGradient id="gradient" x1="0" y1="0" x2="32" y2="32">
+                <stop offset="0%" stop-color="#3b82f6" />
+                <stop offset="100%" stop-color="#8b5cf6" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <span>RouteIQ</span>
+        </div>
+        <button class="ai-assist-btn" id="ai-toggle">
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5M2 12l10 5 10-5" />
+          </svg>
+          AI Assistant
+        </button>
+      </div>
+    </header>
+
+    <div class="main-container">
+      <!-- Sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-content">
+          <!-- Stats Section -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon">🚌</div>
+              <div class="stat-value" id="stat-trips">0</div>
+              <div class="stat-label">Trips</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">⏱️</div>
+              <div class="stat-value" id="stat-time">0</div>
+              <div class="stat-label">Minutes Saved</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">🌱</div>
+              <div class="stat-value" id="stat-co2">0</div>
+              <div class="stat-label">CO₂ Saved (kg)</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">🔄</div>
+              <div class="stat-value" id="stat-reroutes">0</div>
+              <div class="stat-label">Smart Reroutes</div>
+            </div>
+          </div>
+
+          <!-- Trip Planner -->
+          <div class="section">
+            <h2 class="section-title">Plan Your Trip</h2>
+
+            <!-- Origin -->
+            <div class="input-group">
+              <label>Origin</label>
+              <div class="radio-group">
+                <label class="radio-label">
+                  <input
+                    type="radio"
+                    name="origin-type"
+                    value="location"
+                    checked
+                  />
+                  <span>Current Location</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="origin-type" value="station" />
+                  <span>Station</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="origin-type" value="custom" />
+                  <span>Custom</span>
+                </label>
+              </div>
+              <div id="origin-input-container">
+                <button class="location-btn" id="refresh-location">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
+                  Use Current Location
+                </button>
+              </div>
+            </div>
+
+            <!-- Destination -->
+            <div class="input-group">
+              <label>Destination</label>
+              <div class="radio-group">
+                <label class="radio-label">
+                  <input type="radio" name="dest-type" value="custom" checked />
+                  <span>Custom</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="dest-type" value="station" />
+                  <span>Station</span>
+                </label>
+              </div>
+              <div id="destination-input-container">
+                <input
+                  type="text"
+                  id="destination-input"
+                  class="text-input"
+                  placeholder="Enter destination"
+                />
+              </div>
+            </div>
+
+            <!-- Arrival Time -->
+            <div class="input-group">
+              <label>Desired Arrival Time</label>
+              <input type="time" id="arrival-time" class="text-input" />
+            </div>
+
+            <!-- Travel Mode -->
+            <div class="input-group">
+              <label>Travel to Station</label>
+              <select id="travel-mode" class="text-input">
+                <option value="WALKING">Walking</option>
+                <option value="BICYCLING">Cycling</option>
+                <option value="DRIVING">Driving</option>
+                <option value="TRANSIT">Transit</option>
+              </select>
+            </div>
+
+            <button class="primary-btn" id="find-routes">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.35-4.35" />
+              </svg>
+              Find Routes
+            </button>
+          </div>
+
+          <!-- Routes List -->
+          <div class="section" id="routes-section" style="display: none">
+            <h2 class="section-title">Available Routes</h2>
+            <div id="routes-list"></div>
+          </div>
+
+          <!-- Bus Schedule -->
+          <div class="section" id="bus-section" style="display: none">
+            <h2 class="section-title">Bus Schedule</h2>
+            <div id="bus-schedule-container"></div>
+          </div>
+
+          <!-- Alerts -->
+          <div class="section" id="alerts-section" style="display: none">
+            <h2 class="section-title">Alerts</h2>
+            <div id="alerts-list"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="main-content">
+        <!-- Map Container -->
+        <div class="map-container">
+          <div id="map"></div>
+          <div class="map-controls">
+            <button class="map-control-btn" id="toggle-traffic">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="5" r="3" />
+                <circle cx="12" cy="12" r="3" />
+                <circle cx="12" cy="19" r="3" />
+              </svg>
+            </button>
+            <button class="map-control-btn" id="center-map">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- AI Assistant Panel -->
+        <div class="ai-panel" id="ai-panel">
+          <div class="ai-header">
+            <h3>AI Travel Assistant</h3>
+            <button class="close-btn" id="close-ai">×</button>
+          </div>
+          <div class="ai-messages" id="ai-messages">
+            <div class="ai-message ai-message-assistant">
+              <div class="ai-avatar">🤖</div>
+              <div class="ai-content">
+                Hi! I'm your AI travel assistant powered by Gemini. I can help
+                you:
+                <ul>
+                  <li>Find the fastest routes</li>
+                  <li>Suggest optimal departure times</li>
+                  <li>Provide real-time traffic updates</li>
+                  <li>Answer transit questions</li>
+                </ul>
+                What can I help you with today?
+              </div>
+            </div>
+          </div>
+          <div class="ai-input-container">
+            <input
+              type="text"
+              id="ai-input"
+              class="ai-input"
+              placeholder="Ask me anything about your trip..."
+            />
+            <button class="ai-send-btn" id="ai-send">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loading-overlay">
+      <div class="spinner"></div>
+      <p>Finding best routes...</p>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA_qFnB9Zju3GBTVsRief39CSWa2zkLj_8&libraries=places,geometry"></script>
+    <script src="config.js"></script>
+    <script src="go-transit-api.js"></script>
+    <script src="gemini.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

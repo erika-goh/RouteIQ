@@ -1,0 +1,18 @@
+{
+  "name": "routeiq",
+  "version": "1.0.0",
+  "description": "Smart transit planning assistant for the Greater Toronto Area",
+  "scripts": {
+    "serve": "npx http-server -p 8000 -c-1",
+    "dev": "npx http-server -p 8000 -c-1",
+    "build": "echo 'No build step needed for static site'"
+  },
+  "keywords": [
+    "transit",
+    "GO Bus",
+    "route planning",
+    "AI assistant"
+  ],
+  "author": "Erik",
+  "license": "MIT"
+}
