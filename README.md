@@ -38,7 +38,7 @@ An intelligent transit route planner that integrates Google Maps API, **GO Trans
 
 ## What's Integrated
 
-### ✅ Your GO Transit API (Key: 30026449)
+### ✅ Your GO Transit API 
 
 The app is pre-configured with your GO Transit API key and includes:
 
@@ -49,7 +49,7 @@ The app is pre-configured with your GO Transit API key and includes:
 
 ### ✅ Google Maps API
 
-- Already configured with your key: `AIzaSyA_qFnB9Zju3GBTVsRief39CSWa2zkLj_8`
+- Already configured with your key: 
 - **⚠️ IMPORTANT**: Please regenerate this key since it's now public!
 
 ### 🔧 Needs Setup: Gemini AI (Optional)
