@@ -1,8 +1,9 @@
-// Configuration file for API keys and GO Transit API
+// Configuration file for GO Transit API and app data.
+// NOTE: The Gemini API key is NOT here — it lives server-side in the
+// /api/chat proxy (Vercel env var GEMINI_API_KEY) and never reaches the
+// browser. The Google Maps key is loaded in index.html and should be
+// restricted by HTTP referrer in the Google Cloud console.
 const CONFIG = {
-  GOOGLE_MAPS_API_KEY: " ",
-  GEMINI_API_KEY: " ",
-
   // GO Transit API Configuration
   GO_TRANSIT_API: {
     BASE_URL: "https://api.gotransit.com/api",
@@ -27,81 +28,96 @@ const CONFIG = {
     },
     {
       name: "Oakville GO Bus Terminal",
-      code: "OK",
+      code: "00137",
       lat: 43.4667,
       lng: -79.6833,
       type: "Bus",
     },
     {
       name: "Yorkdale Bus Terminal",
-      code: "YD",
+      code: "00019",
       lat: 43.7253,
       lng: -79.4515,
       type: "Bus",
     },
     {
       name: "York Mills Bus Terminal",
-      code: "YM",
+      code: "00011",
       lat: 43.7457,
       lng: -79.4077,
       type: "Bus",
     },
     {
       name: "Richmond Hill Terminal",
-      code: "RH",
+      code: "00062",
       lat: 43.8748,
       lng: -79.4283,
       type: "Bus",
     },
     {
       name: "Mississauga City Centre Terminal",
-      code: "MI",
+      code: "00132",
       lat: 43.5945,
       lng: -79.6432,
       type: "Bus",
     },
     {
       name: "Burlington GO Bus Terminal",
-      code: "BU",
+      code: "00177",
       lat: 43.3397,
       lng: -79.804,
       type: "Bus",
     },
     {
       name: "Oshawa GO Bus Terminal",
-      code: "OS",
+      code: "00159",
       lat: 43.8677,
       lng: -78.8663,
       type: "Bus",
     },
     {
       name: "Brampton GO Bus Terminal",
-      code: "BR",
+      code: "01305",
       lat: 43.6833,
       lng: -79.7675,
       type: "Train",
     },
     {
       name: "Hamilton GO Centre",
-      code: "HA",
+      code: "00141",
       lat: 43.2557,
       lng: -79.8711,
       type: "Train & Bus",
     },
   ],
 
-  // Travel modes
+  // Travel modes (icons are inline SVG strings, styled via currentColor)
   TRAVEL_MODES: [
-    { value: "WALKING", label: "Walk", icon: "🚶", color: "#3b82f6" },
+    {
+      value: "WALKING",
+      label: "Walk",
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12.5" cy="4" r="1.6"/><path d="M9 21l2.2-6.5L14 12l-1-4"/><path d="M13 9l3 1.2 2.2 2.8"/><path d="M11.2 14.5l-2.2 2"/></svg>',
+      color: "#8257e6",
+    },
     {
       value: "BICYCLING",
       label: "Bike",
-      icon: "🚴",
-      color: "#22c55e",
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="17" r="3.2"/><circle cx="18" cy="17" r="3.2"/><path d="M6 17l4-7h5l-3.2 7"/><path d="M10 10l-1-3h3"/></svg>',
+      color: "#46d19e",
       zeroCO2: true,
     },
-    { value: "DRIVING", label: "Drive", icon: "🚗", color: "#ef4444" },
-    { value: "TRANSIT", label: "Transit", icon: "🚌", color: "#8b5cf6" },
+    {
+      value: "DRIVING",
+      label: "Drive",
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 14l1.2-4.2A2 2 0 0 1 8.1 8h7.8a2 2 0 0 1 1.9 1.8L19 14"/><path d="M4 14h16v3h-1.5M5.5 17H4v-3"/><path d="M7 17h10"/><circle cx="7.5" cy="17.5" r="1.2"/><circle cx="16.5" cy="17.5" r="1.2"/></svg>',
+      color: "#f0637a",
+    },
+    {
+      value: "TRANSIT",
+      label: "Transit",
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4" width="15" height="12.5" rx="2"/><path d="M4.5 11h15M8.5 4v7"/><circle cx="8" cy="19" r="1.2"/><circle cx="16" cy="19" r="1.2"/></svg>',
+      color: "#4d7cff",
+    },
   ],
 
   // GO Bus Routes (mock data for scheduling)

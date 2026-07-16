@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RouteIQ - AI-Powered Transit Planner</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%238257e6'/><path d='M8 12h16M8 16h16M8 20h16' stroke='white' stroke-width='2.4' stroke-linecap='round'/></svg>"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Leaflet (free, no API key) -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -49,6 +64,12 @@
       <!-- Sidebar -->
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-content">
+          <!-- Alerts (top for visibility) -->
+          <div class="section" id="alerts-section" style="display: none">
+            <h2 class="section-title">Alerts</h2>
+            <div id="alerts-list"></div>
+          </div>
+
           <!-- Stats Section -->
           <div class="stats-grid">
             <div class="stat-card">
@@ -199,7 +220,11 @@
         <div class="map-container">
           <div id="map"></div>
           <div class="map-controls">
-            <button class="map-control-btn" id="toggle-traffic">
+            <button
+              class="map-control-btn"
+              id="toggle-traffic"
+              title="Toggle GO stations"
+            >
               <svg
                 width="20"
                 height="20"
@@ -213,7 +238,7 @@
                 <circle cx="12" cy="19" r="3" />
               </svg>
             </button>
-            <button class="map-control-btn" id="center-map">
+            <button class="map-control-btn" id="center-map" title="Center on me">
               <svg
                 width="20"
                 height="20"
@@ -237,17 +262,18 @@
           </div>
           <div class="ai-messages" id="ai-messages">
             <div class="ai-message ai-message-assistant">
-              <div class="ai-avatar">🤖</div>
+              <div class="ai-avatar">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2l1.7 5.6L19 9l-5.3 1.4L12 16l-1.7-5.6L5 9l5.3-1.4z" />
+                  <circle cx="18.5" cy="17.5" r="1.6" />
+                </svg>
+              </div>
               <div class="ai-content">
-                Hi! I'm your AI travel assistant powered by Gemini. I can help
-                you:
-                <ul>
-                  <li>Find the fastest routes</li>
-                  <li>Suggest optimal departure times</li>
-                  <li>Provide real-time traffic updates</li>
-                  <li>Answer transit questions</li>
-                </ul>
-                What can I help you with today?
+                Hi! I'm your RouteIQ assistant. Just tell me where you're
+                going — e.g.
+                <em>"from Oakville GO to Hamilton GO"</em> — and I'll fill in
+                your trip and pull up the routes. I'll ask if I need anything
+                else, and I can answer questions about your options too.
               </div>
             </div>
           </div>
@@ -283,7 +309,7 @@
     </div>
 
     <!-- Scripts -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA_qFnB9Zju3GBTVsRief39CSWa2zkLj_8&libraries=places,geometry"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="config.js"></script>
     <script src="go-transit-api.js"></script>
     <script src="gemini.js"></script>

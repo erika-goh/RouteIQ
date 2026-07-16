@@ -1,283 +1,160 @@
-// GO Transit API Service
+// GO Transit (Metrolinx Open Data) client — talks to the /api/gotransit proxy
+// so the API key stays server-side. All calls degrade gracefully: if the proxy
+// or upstream is unavailable, callers fall back to bundled schedule data.
 class GOTransitService {
-  constructor(apiKey) {
-    this.apiKey = apiKey;
-    this.baseURL = "https://api.gotransit.com/api/ServiceataGlance";
+  constructor() {
+    this.proxy = "/api/gotransit";
   }
 
-  /**
-   * Plan a trip using GO Transit API
-   * @param {Object} params - Trip parameters
-   * @returns {Promise} - Trip plan data
-   */
-  async planTrip(params) {
-    const { fromCode, toCode, date, time, arriveBy = true } = params;
-
+  // Fetch a Metrolinx Open Data path through the proxy. Returns parsed JSON or null.
+  async fetchPath(path) {
     try {
-      const url = `${this.baseURL}/TripPlanner/PlanTrip`;
-      const queryParams = new URLSearchParams({
-        key: this.apiKey,
-        from: fromCode,
-        to: toCode,
-        date: date || this.getCurrentDate(),
-        time: time || this.getCurrentTime(),
-        arriveBy: arriveBy.toString(),
-      });
-
-      const response = await fetch(`${url}?${queryParams.toString()}`, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`GO Transit API error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return this.parseJourneys(data);
-    } catch (error) {
-      console.error("Error planning trip:", error);
-      throw error;
+      const res = await fetch(`${this.proxy}?path=${encodeURIComponent(path)}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (err) {
+      console.warn("GO Transit fetch failed:", err.message);
+      return null;
     }
   }
 
   /**
-   * Get stop times for a specific station
+   * Next real departures for a stop, as ["HH:MM", ...] (future, sorted, unique).
+   * Uses live Metrolinx NextService data (Computed time when available, i.e.
+   * accounting for delays; otherwise the scheduled time).
+   * Returns null when live data is unavailable so callers can fall back.
    */
-  async getStopTimes(stopCode, date, time) {
-    try {
-      const url = `${this.baseURL}/Stops/GetStopTimes`;
-      const queryParams = new URLSearchParams({
-        key: this.apiKey,
-        stopCode: stopCode,
-        date: date || this.getCurrentDate(),
-        time: time || this.getCurrentTime(),
-      });
+  async getNextService(stopCode) {
+    if (!stopCode) return null;
+    const data = await this.fetchPath(`api/V1/Stop/NextService/${stopCode}`);
+    const lines = data && data.NextService && data.NextService.Lines;
+    if (!Array.isArray(lines) || lines.length === 0) return null;
 
-      const response = await fetch(`${url}?${queryParams.toString()}`);
+    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+    const times = lines
+      .map((l) => l.ComputedDepartureTime || l.ScheduledDepartureTime || "")
+      .map((s) => {
+        const m = String(s).match(/(\d{1,2}):(\d{2})/);
+        return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
+      })
+      .filter(Boolean);
 
-      if (!response.ok) {
-        throw new Error(`GO Transit API error: ${response.status}`);
-      }
+    const unique = [...new Set(times)]
+      .filter((t) => {
+        const [h, mm] = t.split(":").map(Number);
+        return h * 60 + mm >= nowMinutes;
+      })
+      .sort();
 
-      return await response.json();
-    } catch (error) {
-      console.error("Error getting stop times:", error);
-      throw error;
-    }
+    return unique.length ? unique : null;
   }
 
   /**
-   * Get service updates/alerts
+   * Service alerts / updates. Returns an array of { message } (may be empty).
    */
   async getServiceUpdates() {
-    try {
-      const url = `${this.baseURL}/ServiceUpdates/GetServiceUpdates`;
-      const queryParams = new URLSearchParams({
-        key: this.apiKey,
-      });
+    const data = await this.fetchPath("api/V1/ServiceUpdate/InformationAlert/All");
+    if (!data) return [];
+    return this.extractMessages(data).map((message) => ({ message }));
+  }
 
-      const response = await fetch(`${url}?${queryParams.toString()}`);
-
-      if (!response.ok) {
-        throw new Error(`GO Transit API error: ${response.status}`);
+  /**
+   * Recursively pull time-like values ("HH:MM") from departure/time fields,
+   * regardless of the exact response shape. Keeps only future times.
+   */
+  extractTimes(node, found = new Set()) {
+    if (node == null) return [];
+    if (Array.isArray(node)) {
+      node.forEach((item) => this.extractTimes(item, found));
+    } else if (typeof node === "object") {
+      for (const [key, value] of Object.entries(node)) {
+        if (
+          typeof value === "string" &&
+          /depart/i.test(key) &&
+          /\d{1,2}:\d{2}/.test(value)
+        ) {
+          const m = value.match(/(\d{1,2}):(\d{2})/);
+          if (m) {
+            const hh = String(parseInt(m[1], 10)).padStart(2, "0");
+            found.add(`${hh}:${m[2]}`);
+          }
+        } else if (value && typeof value === "object") {
+          this.extractTimes(value, found);
+        }
       }
-
-      return await response.json();
-    } catch (error) {
-      console.error("Error getting service updates:", error);
-      return [];
-    }
-  }
-
-  /**
-   * Parse journey data from API response
-   */
-  parseJourneys(data) {
-    if (!data.SchJourneys || !Array.isArray(data.SchJourneys)) {
-      return [];
     }
 
-    return data.SchJourneys.map((journey) => {
-      return journey.Services.map((service) => ({
-        startTime: service.StartTime,
-        endTime: service.EndTime,
-        duration: service.Duration,
-        transferCount: service.transferCount || 0,
-        accessible: service.Accessible === "true",
-        trips: this.parseTrips(service.Trips),
-        transfers: this.parseTransfers(service.Transfers),
-        color: service.Colour,
-        type: service.Type,
-        direction: service.Direction,
-        code: service.Code,
-      }));
-    }).flat();
+    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+    return [...found]
+      .filter((t) => {
+        const [h, mm] = t.split(":").map(Number);
+        return h * 60 + mm > nowMinutes;
+      })
+      .sort();
   }
 
-  /**
-   * Parse trip segments
-   */
-  parseTrips(tripsData) {
-    if (!tripsData || !tripsData.Trip) {
-      return [];
+  // Recursively collect human-readable message strings from an alerts payload.
+  extractMessages(node, found = []) {
+    if (node == null) return found;
+    if (Array.isArray(node)) {
+      node.forEach((item) => this.extractMessages(item, found));
+    } else if (typeof node === "object") {
+      for (const [key, value] of Object.entries(node)) {
+        if (
+          typeof value === "string" &&
+          value.trim().length > 8 &&
+          /(message|description|title|alert|subjectenglish)/i.test(key)
+        ) {
+          found.push(value.trim());
+        } else if (value && typeof value === "object") {
+          this.extractMessages(value, found);
+        }
+      }
     }
-
-    const trips = Array.isArray(tripsData.Trip)
-      ? tripsData.Trip
-      : [tripsData.Trip];
-
-    return trips.map((trip) => ({
-      number: trip.Number,
-      display: trip.Display,
-      line: trip.Line,
-      direction: trip.Direction,
-      type: trip.Type,
-      stops: this.parseStops(trip.Stops),
-    }));
+    return [...new Set(found)].slice(0, 5);
   }
 
-  /**
-   * Parse stops data
-   */
-  parseStops(stopsData) {
-    if (!stopsData || !stopsData.Stop) {
-      return [];
-    }
+  /* ---------------- Local helpers (no network) ---------------- */
 
-    const stops = Array.isArray(stopsData.Stop)
-      ? stopsData.Stop
-      : [stopsData.Stop];
-
-    return stops.map((stop) => ({
-      code: stop.Code,
-      order: stop.Order,
-      time: stop.Time,
-      isMajor: stop.IsMajor,
-    }));
-  }
-
-  /**
-   * Parse transfer data
-   */
-  parseTransfers(transfersData) {
-    if (!transfersData || !transfersData.Transfer) {
-      return [];
-    }
-
-    const transfers = Array.isArray(transfersData.Transfer)
-      ? transfersData.Transfer
-      : [transfersData.Transfer];
-
-    return transfers.map((transfer) => ({
-      code: transfer.Code,
-      order: transfer.Order,
-      time: transfer.Time,
-    }));
-  }
-
-  /**
-   * Calculate CO2 savings
-   */
+  // Average CO2 per km: Car = 0.19 kg, Transit = 0.05 kg
   calculateCO2Savings(distance, mode) {
-    // Average CO2 per km: Car = 0.19 kg, Transit = 0.05 kg
     const distanceKm = this.parseDistance(distance);
-
-    if (mode === "BICYCLING" || mode === "WALKING") {
-      return distanceKm * 0.19; // Full car emissions saved
-    } else if (mode === "TRANSIT") {
-      return distanceKm * (0.19 - 0.05); // Difference between car and transit
-    } else if (mode === "DRIVING") {
-      return distanceKm * 0.19; // Car emissions generated
-    }
-
+    if (mode === "BICYCLING" || mode === "WALKING") return distanceKm * 0.19;
+    if (mode === "TRANSIT") return distanceKm * (0.19 - 0.05);
+    if (mode === "DRIVING") return distanceKm * 0.19;
     return 0;
   }
 
-  /**
-   * Parse distance string (e.g., "3.7 km" -> 3.7)
-   */
   parseDistance(distanceStr) {
     if (typeof distanceStr === "number") return distanceStr;
-    const match = distanceStr.match(/(\d+\.?\d*)/);
+    const match = String(distanceStr).match(/(\d+\.?\d*)/);
     return match ? parseFloat(match[1]) : 0;
   }
 
-  /**
-   * Get current date in YYYY-MM-DD format
-   */
-  getCurrentDate() {
-    const now = new Date();
-    return now.toISOString().split("T")[0];
-  }
-
-  /**
-   * Get current time in HH:MM format
-   */
-  getCurrentTime() {
-    const now = new Date();
-    return now.toTimeString().substring(0, 5);
-  }
-
-  /**
-   * Format duration string (e.g., "45 minutes" from "00:45:00")
-   */
-  formatDuration(durationStr) {
-    if (!durationStr) return "0 min";
-
-    const parts = durationStr.split(":");
-    const hours = parseInt(parts[0]) || 0;
-    const minutes = parseInt(parts[1]) || 0;
-
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    }
-    return `${minutes} min`;
-  }
-
-  /**
-   * Find nearest GO station to coordinates
-   */
   findNearestStation(lat, lng, stations) {
     let nearest = null;
     let minDistance = Infinity;
-
     stations.forEach((station) => {
-      const distance = this.calculateHaversineDistance(
-        lat,
-        lng,
-        station.lat,
-        station.lng,
-      );
-
+      const distance = this.calculateHaversineDistance(lat, lng, station.lat, station.lng);
       if (distance < minDistance) {
         minDistance = distance;
         nearest = station;
       }
     });
-
     return { station: nearest, distance: minDistance };
   }
 
-  /**
-   * Calculate distance between two points using Haversine formula
-   */
   calculateHaversineDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371; // Earth's radius in km
+    const R = 6371;
     const dLat = this.toRadians(lat2 - lat1);
     const dLon = this.toRadians(lon2 - lon1);
-
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos(this.toRadians(lat1)) *
         Math.cos(this.toRadians(lat2)) *
         Math.sin(dLon / 2) *
         Math.sin(dLon / 2);
-
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
   }
 
   toRadians(degrees) {

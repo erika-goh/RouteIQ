@@ -1,80 +1,40 @@
 // Gemini AI Integration Module
+// Talks to the /api/chat serverless proxy so the API key stays server-side.
+// Falls back to a smart, data-driven offline response when the proxy is
+// unavailable (e.g. local static hosting or no GEMINI_API_KEY configured).
 class GeminiAssistant {
-  constructor(apiKey) {
-    this.apiKey = apiKey;
-    // Using Gemini 2.0 Flash - the latest stable model
-    this.endpoint =
-      "https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent";
+  constructor(options = {}) {
+    this.endpoint = options.endpoint || "/api/chat";
     this.conversationHistory = [];
   }
 
   async sendMessage(userMessage, context = {}) {
-    try {
-      const prompt = this.buildPrompt(userMessage, context);
+    const prompt = this.buildPrompt(userMessage, context);
 
-      const response = await fetch(`${this.endpoint}?key=${this.apiKey}`, {
+    try {
+      const response = await fetch(this.endpoint, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: prompt,
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 1024,
-          },
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error("Gemini API response:", errorData);
-
-        // If model not found, provide a helpful fallback response
-        if (response.status === 404) {
-          console.warn("Model not available, using fallback response");
-          return this.getFallbackResponse(userMessage, context);
-        }
-
-        throw new Error(
-          `Gemini API error: ${response.status} - ${errorData.error?.message || "Unknown error"}`,
+        // 503 = no key configured, 404 = no backend (static hosting), etc.
+        console.warn(
+          `AI proxy unavailable (${response.status}); using offline fallback.`,
         );
+        return this.getFallbackResponse(userMessage, context);
       }
 
       const data = await response.json();
-
-      // Handle the response structure with better error handling
-      if (!data.candidates || data.candidates.length === 0) {
-        throw new Error("No response from Gemini API");
-      }
-
-      if (
-        !data.candidates[0].content ||
-        !data.candidates[0].content.parts ||
-        data.candidates[0].content.parts.length === 0
-      ) {
-        throw new Error("Invalid response structure from Gemini API");
-      }
-
-      const aiResponse = data.candidates[0].content.parts[0].text;
+      const aiResponse = data && data.reply;
 
       if (!aiResponse || aiResponse.trim() === "") {
-        throw new Error("Empty response from Gemini API");
+        return this.getFallbackResponse(userMessage, context);
       }
 
       // Store in conversation history for context
-      this.conversationHistory.push({
-        role: "user",
-        content: userMessage,
-      });
+      this.conversationHistory.push({ role: "user", content: userMessage });
       this.conversationHistory.push({
         role: "assistant",
         content: aiResponse,
@@ -87,10 +47,154 @@ class GeminiAssistant {
 
       return aiResponse;
     } catch (error) {
-      console.error("Gemini API Error:", error);
-      // Return fallback response on any error
+      console.warn("AI request failed; using offline fallback:", error.message);
       return this.getFallbackResponse(userMessage, context);
     }
+  }
+
+  // Low-level call to the proxy. Returns the reply string, or null on failure.
+  async _call(prompt, json = false) {
+    try {
+      const res = await fetch(this.endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, json }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data && data.reply) || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Agent mode: interpret the user's message and return a structured action the
+   * app applies to the form (origin/destination/mode/arrival + whether to
+   * search). The reply is short; the app — not the model — produces the actual
+   * route results, so the model is told NEVER to invent times/routes/numbers.
+   */
+  async agentAct(userMessage, context = {}) {
+    const stations = (
+      typeof CONFIG !== "undefined" ? CONFIG.GO_TRANSIT_STATIONS : []
+    )
+      .map((s) => `${s.name} [${s.code}]`)
+      .join("; ");
+
+    const dataLines = [];
+    if (context.routes && context.routes !== "No routes found yet")
+      dataLines.push(`Current route options:\n${context.routes}`);
+    if (context.trafficData) dataLines.push(`Traffic: ${context.trafficData}`);
+    if (context.busSchedule && context.busSchedule !== "No schedule available")
+      dataLines.push(`Next departures: ${context.busSchedule}`);
+    const dataBlock = dataLines.length ? dataLines.join("\n") : "none yet";
+
+    const prompt = `You are RouteIQ's trip-planning agent for GO Transit in the Greater Toronto Area.
+Return ONLY a JSON object (no markdown, no code fence) with EXACTLY this shape:
+{
+ "reply": string,
+ "origin": {"kind":"current"|"station"|"custom","value":string} | null,
+ "destination": {"kind":"station"|"custom","value":string} | null,
+ "travelMode": "WALKING"|"BICYCLING"|"DRIVING"|"TRANSIT" | null,
+ "arrivalTime": string | null,
+ "search": boolean,
+ "needMore": boolean
+}
+
+GO stations — for kind "station", set "value" to the CODE in brackets:
+${stations}
+
+Rules:
+- Map any named GO station to the closest code above. Any other place/address => kind "custom" with value = the place text.
+- "my location" / "current location" / "here" => origin kind "current".
+- "arrivalTime" must be "HH:MM" 24-hour, or null.
+- Set "search" TRUE only when BOTH origin and destination are known; then "needMore" is false.
+- If something required is missing, set "search" false, "needMore" true, and make "reply" ask ONLY for the missing piece.
+- CRITICAL: keep "reply" to ONE short sentence. NEVER invent or state route options, bus numbers, departure times, durations, distances, or CO2 — the app calculates and displays those. When you set a trip, reply like "Planning your trip from A to B — showing your options now."
+- If the user is only asking a question about the current results, set origin/destination null and search false, and answer briefly using ONLY this data:
+${dataBlock}
+
+User message: "${userMessage}"`;
+
+    const raw = await this._call(prompt, true);
+    if (raw) {
+      try {
+        const cleaned = raw.replace(/^```json\s*|\s*```$/g, "").trim();
+        const obj = JSON.parse(cleaned);
+        this.conversationHistory.push({ role: "user", content: userMessage });
+        this.conversationHistory.push({
+          role: "assistant",
+          content: obj.reply || "",
+        });
+        if (this.conversationHistory.length > 20)
+          this.conversationHistory = this.conversationHistory.slice(-20);
+        return obj;
+      } catch (e) {
+        // fall through to heuristic
+      }
+    }
+    return this._heuristic(userMessage, context);
+  }
+
+  // Offline / parse-failure fallback: try to read "from A to B" and match
+  // stations; otherwise answer conversationally.
+  _heuristic(userMessage, context = {}) {
+    const msg = userMessage.toLowerCase();
+    const stations =
+      typeof CONFIG !== "undefined" ? CONFIG.GO_TRANSIT_STATIONS : [];
+    const matchStation = (text) => {
+      text = text.toLowerCase();
+      return stations.find((s) => {
+        const key = s.name
+          .toLowerCase()
+          .replace(/ go.*| bus.*| terminal.*| centre.*/, "")
+          .trim();
+        return key && text.includes(key);
+      });
+    };
+
+    const m =
+      msg.match(/from (.+?) to (.+)/) || msg.match(/to (.+?) from (.+)/);
+    if (m) {
+      let a, b;
+      if (/^\s*from/.test(msg)) {
+        a = m[1];
+        b = m[2];
+      } else {
+        b = m[1];
+        a = m[2];
+      }
+      const so = matchStation(a);
+      const sd = matchStation(b);
+      const origin =
+        /current|my location|here/.test(a)
+          ? { kind: "current", value: "" }
+          : so
+            ? { kind: "station", value: so.code }
+            : { kind: "custom", value: a.trim() };
+      const destination = sd
+        ? { kind: "station", value: sd.code }
+        : { kind: "custom", value: b.trim() };
+      return {
+        reply: `Planning your trip${so ? ` from ${so.name}` : ""}${sd ? ` to ${sd.name}` : ""} — showing your options now.`,
+        origin,
+        destination,
+        travelMode: null,
+        arrivalTime: null,
+        search: true,
+        needMore: false,
+      };
+    }
+
+    return {
+      reply: this.getFallbackResponse(userMessage, context),
+      origin: null,
+      destination: null,
+      travelMode: null,
+      arrivalTime: null,
+      search: false,
+      needMore: false,
+    };
   }
 
   getFallbackResponse(userMessage, context = {}) {
@@ -250,19 +354,18 @@ Guidelines:
   }
 
   async analyzeRoute(routeData) {
+    // routeData is a flat, primitive-only summary (no Google Maps objects) so
+    // it renders cleanly inside the prompt.
     const context = {
       origin: routeData.origin,
       destination: routeData.destination,
-      duration: routeData.duration,
-      distance: routeData.distance,
-      steps: routeData.steps,
+      arrivalTime: routeData.arrivalTime,
+      routes: routeData.routeSummary,
+      trafficData: routeData.trafficData,
+      busSchedule: routeData.busSchedule,
     };
 
-    const message = `Analyze this transit route and provide insights on:
-1. Best time to leave
-2. Potential delays or issues
-3. Alternative suggestions if needed
-4. Tips for this journey`;
+    const message = `Analyze the recommended route above and give a short, practical briefing: the best time to leave, any likely delays, and one tip for this journey. Keep it to 3-4 sentences.`;
 
     return await this.sendMessage(message, context);
   }
@@ -299,13 +402,23 @@ Guidelines:
 
 // Helper function to format AI responses with markdown
 function formatAIResponse(text) {
-  // Convert markdown-style formatting to HTML
-  return text
-    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.*?)\*/g, "<em>$1</em>")
-    .replace(/\n/g, "<br>")
-    .replace(/^- (.+)$/gm, "<li>$1</li>")
-    .replace(/(<li>.*<\/li>)/s, "<ul>$1</ul>");
+  // Convert markdown-style formatting to HTML.
+  // Handle bullet lists BEFORE turning newlines into <br> (the list regex is
+  // line-anchored and would otherwise never match).
+  return (
+    text
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.*?)\*/g, "<em>$1</em>")
+      // Group consecutive "- " lines into a single <ul>.
+      .replace(/(?:^|\n)(- .+(?:\n- .+)*)/g, (_, block) => {
+        const items = block
+          .split("\n")
+          .map((line) => line.replace(/^- (.+)$/, "<li>$1</li>"))
+          .join("");
+        return `<ul>${items}</ul>`;
+      })
+      .replace(/\n/g, "<br>")
+  );
 }
 
 // Export for use in other files

@@ -31,3 +31,5 @@ yarn-debug.log*
 
 # Cache
 .cache/
+.vercel
+.env*

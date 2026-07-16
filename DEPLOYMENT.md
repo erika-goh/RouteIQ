@@ -15,12 +15,35 @@ An intelligent transit planning application for the Greater Toronto Area that us
 ## Tech Stack
 
 - **Frontend**: HTML5, CSS3, JavaScript (ES6+)
-- **APIs**: 
-  - Google Maps API v3 (directions, geocoding, autocomplete)
-  - Google Generative AI (Gemini 2.0 Flash)
-  - GO Transit API (integrated, handles CORS gracefully)
+- **Map**: Leaflet + CARTO/OpenStreetMap tiles — **free, no API key, no billing**
+- **Routing**: OSRM (FOSSGIS public instances) — free, no key
+- **Address search**: Photon geocoder — free, no key
+- **AI**: Google Generative AI (Gemini) via a serverless proxy (`/api/chat`) — free tier
+- **Transit data**: GO Transit API (integrated, handles CORS gracefully)
 - **Storage**: Browser LocalStorage for stats persistence
 - **Deployment**: Vercel (recommended)
+
+## Cost / billing (important)
+
+This app is designed to run at **$0 with no billing account**:
+
+- **Map, routing, address search** use free OpenStreetMap-based services — no
+  API key, no credit card, no Google Cloud billing.
+- **Gemini AI** runs on the **free tier**, which requires billing to be
+  **disabled** on the Google Cloud project (enabling billing removes the free
+  tier). The free tier only covers Flash / Flash-Lite models — set `GEMINI_MODEL`
+  to whatever Google AI Studio lists as free for your project.
+- If Gemini is unavailable for any reason, the assistant automatically falls
+  back to smart, data-driven offline responses.
+
+## AI architecture (important)
+
+The Gemini API key is **never** shipped to the browser. The client (`gemini.js`)
+POSTs to the `/api/chat` serverless function, which reads `GEMINI_API_KEY` from
+the server environment and calls Gemini. If the key/backend is unavailable
+(e.g. plain static hosting or local `http-server`), the assistant automatically
+falls back to smart, data-driven offline responses — so the demo never looks
+broken.
 
 ## Getting Started
 
@@ -32,25 +55,22 @@ git clone https://github.com/YOUR_USERNAME/routeiq.git
 cd routeiq
 ```
 
-2. Get API Keys:
-   - [Google Maps API Key](https://developers.google.com/maps/documentation/javascript)
-   - [Google Generative AI API Key](https://ai.google.dev/tutorials/setup)
+2. API keys: **none required** for the map, routing, or search. The only
+   optional key is Gemini (server-side) for real AI responses — get one from
+   [Google AI Studio](https://aistudio.google.com/apikey) with billing disabled
+   (free tier). Without it, the assistant uses its offline fallback.
 
-3. Update `config.js` with your API keys:
-```javascript
-const CONFIG = {
-  GOOGLE_MAPS_API_KEY: "YOUR_GOOGLE_MAPS_API_KEY",
-  GEMINI_API_KEY: "YOUR_GEMINI_API_KEY",
-  // ... rest of config
-};
-```
-
-4. Start a local server:
+3. **UI + map preview** (AI uses offline fallback, no key needed):
 ```bash
-npx http-server -p 8000
+npx http-server -p 8000 -c-1
 ```
+Open http://localhost:8000. The map, routing, and address search all work here.
 
-5. Open http://localhost:8000 in your browser
+4. **Full local preview with real AI** (runs the `/api/chat` function locally):
+```bash
+echo "GEMINI_API_KEY=your_key_here" > .env.local   # .env.local is gitignored
+npx vercel dev
+```
 
 ## Deployment
 
@@ -64,14 +84,15 @@ npx http-server -p 8000
    - Import your GitHub repository
    - Click "Import"
 
-3. **Add Environment Variables**:
-   - In Vercel dashboard: Settings → Environment Variables
-   - Add `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` with your Google Maps API key
-   - Add `NEXT_PUBLIC_GEMINI_API_KEY` with your Gemini API key
-   - Click "Save"
+3. **Add Environment Variable** (in the Vercel account/team that owns the project):
+   - Dashboard: Settings → Environment Variables
+   - Add `GEMINI_API_KEY` = your Gemini key (server-side — do NOT prefix with `NEXT_PUBLIC`)
+   - Apply to Production (and Preview if you use preview URLs) → Save
+   - Or via CLI: `vercel env add GEMINI_API_KEY` (must be logged into the owning account/team)
 
-4. **Deploy**:
-   - Vercel auto-deploys when you push to main branch
+4. **Deploy / Redeploy**:
+   - Vercel auto-deploys on push to main
+   - Env vars only apply to **new** deployments — redeploy after adding the key
    - Your site is live at `https://routeiq-yourname.vercel.app`
 
 ### Option 2: GitHub Pages
@@ -87,10 +108,12 @@ npx http-server -p 8000
 ```
 routeiq/
 ├── index.html          # Main HTML structure
-├── styles.css          # UI styling and themes
+├── styles.css          # UI styling (light, blue-tinted theme)
 ├── app.js             # Route finding & navigation logic
-├── gemini.js          # AI assistant integration
-├── config.js          # API keys & constants
+├── gemini.js          # AI assistant client (calls /api/chat, offline fallback)
+├── api/
+│   └── chat.js        # Serverless Gemini proxy (holds GEMINI_API_KEY)
+├── config.js          # App constants (stations, routes) — no secrets
 ├── go-transit-api.js  # GO Transit API wrapper
 ├── package.json       # Project metadata
 ├── vercel.json        # Vercel configuration
@@ -103,13 +126,13 @@ routeiq/
 2. **Find routes**: Algorithm finds 5 different GO Bus terminals and calculates routes
 3. **View options**: See duration, distance, traffic, departure times, CO2 impact
 4. **Ask AI**: Chat with Gemini AI for intelligent recommendations
-5. **Navigate**: Click "Start Route" to get turn-by-turn directions on Google Maps
+5. **Navigate**: Click "Start Route" to highlight the route on the map
 
 ## Key Functions
 
-- `findRoutes()` - Locates 5 nearest GO Bus terminals and calculates routes
-- `startRoute(index)` - Launches Google Maps navigation
-- `sendAIMessage()` - Sends context to Gemini for analysis
+- `findRoutes()` - Locates 5 nearest GO Bus terminals and calculates routes (OSRM)
+- `startRoute(index)` - Draws the route polyline on the Leaflet map
+- `sendAIMessage()` - Sends context to the /api/chat Gemini proxy for analysis
 - `getBusSchedule()` - Retrieves next departure times
 - `displayRoutes()` - Renders route cards with all metrics
 
@@ -129,9 +152,13 @@ MIT License - Feel free to use and modify for your own projects
 ## Support
 
 Having issues? Check:
-- API keys are valid in `config.js`
-- Google Maps API has Directions, Geocoding, and Places APIs enabled
-- Gemini API model `gemini-2.0-flash` is available in your region
+- The map/routing/search need internet access to OpenStreetMap-based services
+  (unpkg for Leaflet, CARTO tiles, routing.openstreetmap.de, photon.komoot.io) —
+  no keys required
+- For real AI: `GEMINI_API_KEY` is set in Vercel (Production), billing is
+  **disabled** on the Google Cloud project (free tier), and `GEMINI_MODEL` points
+  at a free Flash model; redeploy after changing env vars
+- Location features need you to allow geolocation in the browser
 - LocalStorage is enabled in your browser
 
 ## Future Enhancements
