@@ -212,10 +212,43 @@ User message: "${userMessage}"`;
   getFallbackResponse(userMessage, context = {}) {
     const message = userMessage.toLowerCase();
 
-    // Extract specific data from context if available
-    const routes = context.routes || "";
+    // Extract specific data — drop the "nothing yet" sentinels so they never
+    // leak into prose (e.g. "departures include: No schedule available").
+    const routes =
+      context.routes && context.routes !== "No routes found yet"
+        ? context.routes
+        : "";
     const trafficData = context.trafficData || "";
-    const busSchedule = context.busSchedule || "";
+    const busSchedule =
+      context.busSchedule && context.busSchedule !== "No schedule available"
+        ? context.busSchedule
+        : "";
+
+    // Bare confirmations ("do it", "yes", "go ahead") — offline we have no
+    // pending action to run, so ask for the trip in one line instead of the
+    // generic canned reply.
+    if (/^(do it|can u do it|can you do it|yes|yep|sure|go|ok(ay)?|please)\.?$/.test(message.trim())) {
+      return "Tell me the trip in one line — like “from Square One to York Mills GO” — and I'll plan it.";
+    }
+
+    // Address / "where is" questions. Offline I can only place known GO stations
+    // and campuses; anything else needs the live map, so say so plainly rather
+    // than returning an unrelated canned answer.
+    if (/\baddress\b|where is|where's|location of|how do i get to/.test(message)) {
+      const stations =
+        typeof CONFIG !== "undefined" ? CONFIG.GO_TRANSIT_STATIONS || [] : [];
+      const hit = stations.find((s) => {
+        const key = s.name
+          .toLowerCase()
+          .replace(/ go.*| bus.*| terminal.*| centre.*/, "")
+          .trim();
+        return key && message.includes(key);
+      });
+      if (hit) {
+        return `${hit.name} is a GO ${hit.type} stop. Set it as your destination and I'll map the exact location and routes there.`;
+      }
+      return "I can't look up arbitrary addresses offline. Type the place into the destination box — it'll geocode and pin it on the map.";
+    }
 
     // Specific, data-driven fallback responses
     if (
@@ -284,8 +317,12 @@ User message: "${userMessage}"`;
       return `Different travel modes have different environmental impacts. Transit and cycling are much more eco-friendly than driving. Check the CO2 metrics for each route.`;
     }
 
-    // Generic data-driven fallback
-    return `I'm analyzing your trip options now. ${trafficData ? "Current traffic shows " + (trafficData.includes("Heavy: 0") ? "all clear routes with good conditions" : "some traffic variations") + ". " : ""}${busSchedule ? "Available departures include: " + busSchedule + ". " : ""}${routes ? "Choose the route that best matches your needs for speed, traffic consistency, or environmental impact." : "Set your destination to find the best routes."}`;
+    // Generic fallback. If there are results, summarise them; otherwise be
+    // honest that the offline assistant is limited and steer toward the form.
+    if (routes) {
+      return `${busSchedule ? "Next departures: " + busSchedule + ". " : ""}Pick the route that best fits your priority — speed, traffic consistency, or lower CO₂. Tap a card to see it on the map.`;
+    }
+    return "I'm in limited offline mode right now, so I can't chat freely — but tell me a trip like “from Burlington GO to Hamilton GO” and I'll plan it, or fill the form on the left.";
   }
 
   buildPrompt(userMessage, context) {
