@@ -108,6 +108,29 @@ const GroupTrip = (() => {
     if (addBtn) addBtn.disabled = friends.length >= MAX;
   }
 
+  // Clear the group panel back to a fresh state: two empty rows, no
+  // destination/results, and the meeting markers removed from the map. Scoped to
+  // the group trip only — it leaves the main planner's route untouched.
+  function reset() {
+    clearLayer();
+    destPlace = null;
+    friends = [];
+    ensureMinimum();
+    renderFriends();
+
+    const di = el("group-dest-input");
+    if (di) di.value = "";
+    const gm = el("group-mode");
+    if (gm) gm.value = "TRANSIT";
+
+    const results = el("group-results");
+    if (results) {
+      results.style.display = "none";
+      results.innerHTML = "";
+    }
+    updateFindState();
+  }
+
   function addFriend() {
     if (friends.length >= MAX) {
       addAlert("info", "Group Full", `You can add up to ${MAX} people.`);
@@ -545,6 +568,7 @@ const GroupTrip = (() => {
 
     el("group-add")?.addEventListener("click", addFriend);
     el("group-find")?.addEventListener("click", () => find(false));
+    el("group-reset")?.addEventListener("click", reset);
 
     ensureMinimum();
     renderFriends();
