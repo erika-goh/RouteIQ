@@ -76,6 +76,7 @@ function initializeApp() {
 
   updateStatsDisplay();
   setupEventListeners();
+  initChatHistory();
   initSidebarResizer();
   handleDestinationType();
   renderCampusChips();
@@ -1379,7 +1380,73 @@ function getCurrentLocationAsync() {
   });
 }
 
-function addAIMessage(role, content) {
+/* ---------------- AI chat history (local persistence) ---------------- */
+// Transcript is kept on-device only (localStorage) — nothing leaves the browser.
+const CHAT_KEY = "routeiq_chat";
+let chatLog = []; // [{role, content}] — everything after the static welcome
+let aiWelcomeHTML = ""; // the static greeting markup, preserved across clears
+
+function initChatHistory() {
+  const container = document.getElementById("ai-messages");
+  if (!container) return;
+  aiWelcomeHTML = container.innerHTML; // capture the greeting once, before restore
+  loadChat();
+
+  document
+    .getElementById("clear-chat")
+    ?.addEventListener("click", clearChat);
+}
+
+function saveChat() {
+  try {
+    // Cap the stored transcript so it can't grow without bound.
+    localStorage.setItem(CHAT_KEY, JSON.stringify(chatLog.slice(-100)));
+  } catch (e) {
+    /* storage full / disabled — chat just won't persist */
+  }
+}
+
+function loadChat() {
+  let saved = [];
+  try {
+    saved = JSON.parse(localStorage.getItem(CHAT_KEY) || "[]");
+  } catch (e) {
+    saved = [];
+  }
+  const valid = Array.isArray(saved)
+    ? saved.filter(
+        (m) =>
+          m &&
+          (m.role === "user" || m.role === "assistant") &&
+          typeof m.content === "string",
+      )
+    : [];
+  if (!valid.length) return;
+
+  // Repopulate chatLog so the NEXT saved message appends to the full history
+  // instead of overwriting it; render each with persist=false to avoid re-saving.
+  chatLog = valid.map((m) => ({ role: m.role, content: m.content }));
+  valid.forEach((m) => addAIMessage(m.role, m.content, false));
+
+  // Rehydrate the assistant's context so follow-up questions stay coherent.
+  if (geminiAssistant) {
+    geminiAssistant.conversationHistory = valid
+      .slice(-20)
+      .map((m) => ({ role: m.role, content: m.content }));
+  }
+}
+
+function clearChat() {
+  chatLog = [];
+  try {
+    localStorage.removeItem(CHAT_KEY);
+  } catch (e) {}
+  const container = document.getElementById("ai-messages");
+  if (container) container.innerHTML = aiWelcomeHTML; // back to just the greeting
+  if (geminiAssistant) geminiAssistant.conversationHistory = [];
+}
+
+function addAIMessage(role, content, persist = true) {
   const messagesContainer = document.getElementById("ai-messages");
   const messageDiv = document.createElement("div");
   messageDiv.className = `ai-message ai-message-${role}`;
@@ -1401,6 +1468,13 @@ function addAIMessage(role, content) {
   messageDiv.append(avatar, contentEl);
   messagesContainer.appendChild(messageDiv);
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+  // Persist the transcript locally so the conversation survives a reload.
+  // Skipped when replaying stored messages (persist=false) to avoid double-save.
+  if (persist) {
+    chatLog.push({ role, content });
+    saveChat();
+  }
 }
 
 async function getAIRouteInsights() {
