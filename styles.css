@@ -20,12 +20,12 @@
   --line: rgba(255, 255, 255, 0.06);
   --line-2: rgba(255, 255, 255, 0.11);
 
-  /* Dark purple accent */
-  --accent: #8257e6;
-  --accent-2: #6a3fd4;
-  --accent-hover: #9670f0;
-  --accent-dim: rgba(130, 87, 230, 0.15);
-  --accent-line: rgba(130, 87, 230, 0.45);
+  /* Brand purple accent (from routes wordmark) */
+  --accent: #7c3aed;
+  --accent-2: #6a2fd8;
+  --accent-hover: #8b45f7;
+  --accent-dim: rgba(124, 58, 237, 0.15);
+  --accent-line: rgba(124, 58, 237, 0.45);
 
   /* Status (muted, low-sat) */
   --green: #46d19e;
@@ -105,17 +105,15 @@ body {
   color: var(--text);
 }
 
-.logo svg {
-  width: 22px;
-  height: 22px;
+.logo .logo-mark {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
 }
 
-.logo svg rect {
-  fill: var(--accent) !important;
-}
-
-.logo svg [stop-color] {
-  stop-color: var(--accent) !important;
+/* Wordmark accent: echo the brand "routes" purple "s" on the IQ */
+.logo .logo-iq {
+  color: var(--accent);
 }
 
 .ai-assist-btn {
@@ -698,6 +696,18 @@ select.text-input {
   position: relative;
 }
 
+#map {
+  background: var(--bg-0);
+}
+
+/* Detailed Voyager tiles recoloured to the dark black/purple theme. The filter
+   hits only the basemap tiles — route lines & markers live in a separate
+   Leaflet pane and stay full colour. */
+.riq-dark-tiles {
+  filter: invert(1) hue-rotate(188deg) brightness(0.9) contrast(0.9)
+    saturate(0.7);
+}
+
 .map-controls {
   position: absolute;
   right: 0.85rem;
@@ -1120,3 +1130,826 @@ body.resizing-sidebar {
     max-height: 70vh;
   }
 }
+
+/* ---- Conversational trip picker (agent-flow.js) ---- */
+.ai-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ai-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.ai-chip:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent-line);
+}
+.ai-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ai-chip-chosen {
+  background: var(--accent-dim);
+  border-color: var(--accent-line);
+  color: var(--accent-hover);
+  opacity: 1 !important;
+}
+.ai-chip-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.ai-time-input {
+  padding: 7px 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  margin-right: 8px;
+}
+
+/* Sidebar trip summary the chat keeps in sync */
+.trip-summary {
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--accent-line);
+}
+.trip-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+}
+.trip-summary-key {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.trip-summary-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+}
+
+/* ============================================================
+   Progress / gamification
+   ============================================================ */
+.progress-top {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  margin-bottom: 0.9rem;
+}
+
+.streak-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--bg-1);
+}
+
+.streak-flame {
+  font-size: 1.5rem;
+  line-height: 1;
+  filter: grayscale(0.15);
+}
+
+.streak-num {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.streak-num span {
+  color: var(--amber);
+}
+
+.streak-best {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-faint);
+  margin-top: 0.15rem;
+}
+
+.badge-tally {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.7rem 1rem;
+  background: var(--bg-1);
+}
+
+.badge-tally-num {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent-hover);
+}
+
+.badge-tally-label {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+  margin-top: 0.15rem;
+}
+
+.level-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.4rem;
+}
+
+.level-name {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.level-xp {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-faint);
+}
+
+.level-bar {
+  height: 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  margin-bottom: 0.9rem;
+}
+
+.level-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent-hover));
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.badges-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+  gap: 5px;
+}
+
+.badge {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  font-size: 1rem;
+  cursor: default;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.badge.earned {
+  background: var(--accent-dim);
+  border-color: var(--accent-line);
+}
+
+.badge.earned:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+}
+
+.badge.locked {
+  filter: grayscale(1);
+  opacity: 0.28;
+}
+
+/* ---------------- Toasts ---------------- */
+#toast-wrap {
+  position: fixed;
+  bottom: 1.1rem;
+  right: 1.1rem;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  pointer-events: none;
+}
+
+.toast {
+  min-width: 230px;
+  max-width: 320px;
+  padding: 0.75rem 0.9rem;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-left: 3px solid var(--accent);
+  box-shadow: var(--shadow-pop);
+  transform: translateX(120%);
+  opacity: 0;
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.32s ease;
+}
+
+.toast.show {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.toast-title {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.toast-body {
+  font-size: 0.74rem;
+  color: var(--text-dim);
+  margin-top: 0.2rem;
+}
+
+/* ---------------- Campus quick-pick chips ---------------- */
+.campus-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.campus-chip {
+  padding: 0.32rem 0.6rem;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.campus-chip:hover {
+  border-color: var(--accent-line);
+  color: var(--text);
+  background: var(--accent-dim);
+}
+
+/* ---------------- Cost lens ---------------- */
+.student-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.7rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.student-toggle input {
+  display: none;
+}
+
+.student-toggle-track {
+  width: 34px;
+  height: 18px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  position: relative;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.student-toggle-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-faint);
+  transition: all 0.15s ease;
+}
+
+.student-toggle input:checked + .student-toggle-track {
+  background: var(--accent-dim);
+  border-color: var(--accent-line);
+}
+
+.student-toggle input:checked + .student-toggle-track .student-toggle-thumb {
+  left: 17px;
+  background: var(--accent-hover);
+}
+
+.student-toggle-text {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.student-toggle-text em {
+  color: var(--text-faint);
+  font-style: normal;
+  font-weight: 500;
+}
+
+.route-cost {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
+}
+
+.route-cost-fare {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.route-cost-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.route-cost-value {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.route-cost-est {
+  font-size: 0.6rem;
+  font-weight: 500;
+  color: var(--text-faint);
+}
+
+.route-cost-save {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--green);
+}
+
+/* ---------------- Group trip ---------------- */
+.group-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 0.8rem;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.13s ease;
+}
+
+.group-toggle:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-dim);
+}
+
+.group-toggle-emoji {
+  margin-right: 0.2rem;
+}
+
+.group-chevron {
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.group-toggle.open .group-chevron {
+  transform: rotate(180deg);
+}
+
+.group-body {
+  padding: 0.9rem 0.1rem 0.1rem;
+}
+
+.group-hint {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-bottom: 0.7rem;
+}
+
+.group-origin {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  margin-bottom: 0.4rem;
+}
+
+.group-origin-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+}
+
+.group-origin-label {
+  flex: 1;
+  font-size: 0.74rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-origin-remove {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  transition: color 0.12s ease;
+}
+
+.group-origin-remove:hover {
+  color: var(--red);
+}
+
+#group-origin-input {
+  margin-top: 0.2rem;
+}
+
+#group-results {
+  margin-top: 0.9rem;
+}
+
+.group-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  margin-bottom: 0.6rem;
+}
+
+.group-meta > div {
+  background: var(--bg-2);
+  padding: 0.5rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.group-meta-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.group-meta-val {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.group-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.group-person {
+  padding: 0.22rem 0.5rem;
+  background: var(--green-dim);
+  border: 1px solid rgba(70, 209, 158, 0.25);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--green);
+}
+
+
+/* ============================================================
+   SVG icon sizing for the new components (no emoji)
+   ============================================================ */
+.streak-flame svg {
+  width: 26px;
+  height: 26px;
+  color: var(--amber);
+}
+
+.badge-icon {
+  display: inline-flex;
+}
+.badge-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.badge.earned .badge-icon svg {
+  color: var(--accent-hover);
+}
+.badge.locked .badge-icon svg {
+  color: var(--text-dim);
+}
+
+/* Toast now has an icon column */
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.toast-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--accent-hover);
+  margin-top: 1px;
+}
+.toast-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Inline icons in cost lines / student toggle */
+.cost-ic {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-right: 0.35rem;
+}
+.cost-ic svg {
+  width: 14px;
+  height: 14px;
+}
+.route-cost-save .cost-ic {
+  color: var(--green);
+}
+
+.group-toggle-icon {
+  color: var(--accent-hover);
+  flex-shrink: 0;
+}
+.gt-ic {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-right: 0.3rem;
+  color: var(--accent-hover);
+}
+.gt-ic svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------------- On-map route legend ---------------- */
+.route-legend {
+  position: absolute;
+  left: 0.85rem;
+  bottom: 0.85rem;
+  z-index: 500;
+  display: none;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.55rem 0.7rem;
+  background: rgba(11, 11, 13, 0.86);
+  border: 1px solid var(--line-2);
+  backdrop-filter: blur(6px);
+}
+.rl-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text);
+}
+.rl-swatch {
+  width: 18px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.rl-swatch.rl-dash {
+  background: none !important;
+  border-top: 3px dotted var(--amber);
+  height: 0;
+}
+
+/* ---------------- Map POI pins (GO stops + campuses) ---------------- */
+.poi {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0, 0, 0, 0.55);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.poi svg {
+  width: 13px;
+  height: 13px;
+  color: #fff;
+}
+.poi-stop {
+  background: #4d7cff;
+}
+.poi-school {
+  background: var(--accent);
+}
+
+/* ============================================================
+   Sidebar UX pass — task-first order + readability
+   ============================================================ */
+/* Order the sidebar so the primary action (Plan Your Trip) is up top,
+   results next, and the stats/gamification sit below. Reversible: delete
+   this block to restore source order. */
+.sidebar-content {
+  display: flex;
+  flex-direction: column;
+}
+#alerts-section   { order: 0; }
+#plan-section     { order: 1; }
+.group-section    { order: 2; }
+#routes-section   { order: 3; }
+#bus-section      { order: 4; }
+.stats-grid       { order: 5; }
+#progress-section { order: 6; }
+
+/* Readability: the labels were very low-contrast (--text-faint) and small.
+   Brighten and enlarge them slightly for legibility. */
+.input-group label {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+.section-title {
+  color: var(--text);
+  font-size: 0.74rem;
+}
+.stat-label {
+  color: var(--text-dim);
+  font-size: 0.64rem;
+}
+.stat-value {
+  font-size: 1.6rem;
+}
+.text-input {
+  font-size: 0.9rem;
+  padding: 0.65rem 0.75rem;
+}
+.radio-label {
+  padding: 0.55rem;
+  font-size: 0.8rem;
+}
+/* A touch more breathing room between sections. */
+.section {
+  margin-bottom: 1.7rem;
+}
+
+/* ---------------- Group Trip: friend rows ---------------- */
+.friend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.45rem;
+}
+.friend-tag {
+  flex-shrink: 0;
+  width: 62px;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.friend-input {
+  flex: 1;
+  min-width: 0;
+}
+.friend-remove {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--text-faint);
+  width: 26px;
+  height: 26px;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.friend-remove:hover:not(:disabled) {
+  border-color: var(--red);
+  color: var(--red);
+}
+.friend-remove:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.group-add-btn {
+  width: 100%;
+  padding: 0.5rem;
+  background: var(--bg-2);
+  border: 1px dashed var(--line-2);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.group-add-btn:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  color: var(--text);
+  background: var(--accent-dim);
+}
+.group-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------------- Live navigation banner (navigation.js) ---------------- */
+.nav-banner {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: rgba(11, 11, 13, 0.92);
+  border: 1px solid var(--accent-line);
+  box-shadow: var(--shadow-pop);
+  backdrop-filter: blur(8px);
+}
+.nav-banner-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.nav-banner-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  color: var(--accent-hover);
+}
+.nav-banner-icon svg { width: 100%; height: 100%; }
+.nav-banner-text { min-width: 0; }
+.nav-instruction {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-sub {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.nav-stop-btn {
+  flex: none;
+  padding: 0.5rem 0.9rem;
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  color: var(--red);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.nav-stop-btn:hover { background: rgba(240, 99, 122, 0.22); }
