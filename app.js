@@ -284,11 +284,38 @@ function setOriginStation() {
   map.setView(currentLocation, 13);
 }
 
+// Shared geolocation options: high accuracy, but never hang — time out after
+// 10s and allow a recent cached fix so repeat calls resolve instantly.
+const GEO_OPTS = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
+
+// Map a GeolocationPositionError to a message the user can act on.
+function geoErrorMessage(error) {
+  if (error && error.code === 1)
+    return "Location permission was blocked. Enable it for this site (address-bar icon), or enter an address instead.";
+  if (error && error.code === 2)
+    return "Your location is unavailable right now. Enter an address instead.";
+  if (error && error.code === 3)
+    return "Finding your location timed out. Try again, or enter an address instead.";
+  return "Could not get your current location. Try entering an address instead.";
+}
+
 function refreshCurrentLocation() {
   showLoading(true);
 
   if (!navigator.geolocation) {
     addAlert("error", "Not Supported", "Geolocation is not supported by your browser.");
+    showLoading(false);
+    return;
+  }
+
+  // Geolocation only works in a secure context (HTTPS or localhost). Fail fast
+  // with a clear reason instead of a silent timeout on a plain-http page.
+  if (window.isSecureContext === false) {
+    addAlert(
+      "warning",
+      "Location Needs HTTPS",
+      "Your browser only shares location over HTTPS (or localhost). Open the site over https, or enter an address instead.",
+    );
     showLoading(false);
     return;
   }
@@ -310,13 +337,10 @@ function refreshCurrentLocation() {
     },
     (error) => {
       console.error("Geolocation error:", error);
-      addAlert(
-        "warning",
-        "Location Error",
-        "Could not get your current location. Try entering an address instead.",
-      );
+      addAlert("warning", "Location Error", geoErrorMessage(error));
       showLoading(false);
     },
+    GEO_OPTS,
   );
 }
 
@@ -515,9 +539,29 @@ async function findRoutes() {
         );
       }
       if (destStation) {
-        ["WALKING", "BICYCLING", "DRIVING", "TRANSIT"].forEach((mode) => {
+        // Non-transit: go straight to the destination station in that mode.
+        ["WALKING", "BICYCLING", "DRIVING"].forEach((mode) => {
           legs.push({ station: destStation, mode, needsBusLeg: false });
         });
+        // Transit: drive/Uber to the nearest BOARDING station (access leg), then
+        // take the transit system onward to the destination station. Pick the
+        // station nearest the ORIGIN (which is the origin's own station if it is
+        // one — a walk-up, so the drive leg is ~0), never the destination itself.
+        const board = findNearbyStations(currentLocation, 5).find(
+          (s) => s.code !== destStation.code,
+        );
+        if (board) {
+          legs.push({
+            station: board,
+            accessMode: "DRIVING",
+            displayMode: "TRANSIT",
+            needsBusLeg: true,
+            transitTarget: L.latLng(destStation.lat, destStation.lng),
+          });
+        } else {
+          // Origin is already at/adjacent to the destination station.
+          legs.push({ station: destStation, mode: "TRANSIT", needsBusLeg: false });
+        }
       }
     } else {
       // Skip the origin's own station if the origin IS a station.
@@ -528,14 +572,27 @@ async function findRoutes() {
       );
       const nearest = nearby[0];
       if (nearest) {
-        // Nearest station: offer every way to get there, so cards differ by mode.
-        ["WALKING", "BICYCLING", "DRIVING", "TRANSIT"].forEach((mode) => {
+        // Nearest station: offer walk/bike/drive to it, so cards differ by mode.
+        ["WALKING", "BICYCLING", "DRIVING"].forEach((mode) => {
           legs.push({ station: nearest, mode, needsBusLeg: true });
+        });
+        // Transit: the access leg to the boarding station is a drive/Uber.
+        legs.push({
+          station: nearest,
+          accessMode: "DRIVING",
+          displayMode: "TRANSIT",
+          needsBusLeg: true,
         });
       }
       // A couple of alternative stations (in the selected mode) for variety.
       nearby.slice(1, 3).forEach((station) => {
-        legs.push({ station, mode: selectedMode, needsBusLeg: true });
+        const isTransit = selectedMode === "TRANSIT";
+        legs.push({
+          station,
+          accessMode: isTransit ? "DRIVING" : selectedMode,
+          displayMode: selectedMode,
+          needsBusLeg: true,
+        });
       });
     }
 
@@ -559,11 +616,15 @@ async function findRoutes() {
     );
 
     for (const leg of legs) {
+      // accessMode routes the leg TO the station; displayMode is what the card
+      // shows (for TRANSIT the access leg is a drive/Uber, shown separately).
+      const accessMode = leg.accessMode || leg.mode;
+      const effMode = leg.displayMode || leg.mode;
       const stationLocation = L.latLng(leg.station.lat, leg.station.lng);
       const routeToStation = await getDirections(
         currentLocation,
         stationLocation,
-        leg.mode,
+        accessMode,
       );
       if (!routeToStation) continue;
 
@@ -571,20 +632,20 @@ async function findRoutes() {
       if (leg.needsBusLeg) {
         routeFromStation = await getDirections(
           stationLocation,
-          destinationLocation,
+          leg.transitTarget || destinationLocation,
           "TRANSIT",
         );
         if (!routeFromStation) continue;
       }
 
       const distance = goTransitService.parseDistance(routeToStation.distance);
-      const co2 = goTransitService.calculateCO2Savings(distance, leg.mode);
+      const co2 = goTransitService.calculateCO2Savings(distance, effMode);
 
       // Driving is most affected by peak-hour congestion; active modes least.
       let traffic = "low";
       if (peak) {
-        if (leg.mode === "DRIVING") traffic = "heavy";
-        else if (leg.mode === "TRANSIT") traffic = "medium";
+        if (effMode === "DRIVING") traffic = "heavy";
+        else if (effMode === "TRANSIT") traffic = "medium";
       }
 
       // Real GO departures when available; bundled schedule as fallback.
@@ -603,9 +664,9 @@ async function findRoutes() {
         busTime: busTime,
         schedule: schedule,
         isLive: !!(live && live.length),
-        travelMode: leg.mode,
+        travelMode: effMode,
         totalDuration: totalDuration,
-        summary: `${leg.mode} to ${leg.station.name} (${routeToStation.distance}) • Bus at ${busTime}`,
+        summary: `${effMode} to ${leg.station.name} (${routeToStation.distance}) • Bus at ${busTime}`,
         co2: co2,
         traffic: traffic,
       });
@@ -878,11 +939,13 @@ function drawRoute(route) {
   const modeDef =
     CONFIG.TRAVEL_MODES.find((m) => m.value === route.travelMode) ||
     CONFIG.TRAVEL_MODES[0];
-  // Leg 1 = how you get TO the station (coloured by travel mode).
-  // Leg 2 = the GO bus/train leg (distinct amber, dashed) — so it's obvious
-  // where you get off one and board the other.
-  const accessColor = modeDef.color || "#8257e6";
-  const transitColor = "#e0b25a";
+  // TRANSIT is special: the leg to the station is a drive/Uber (the "access"
+  // leg) drawn YELLOW & DASHED, and the transit system itself is the SOLID main
+  // line. Every other mode keeps leg 1 solid (the actual travel) + leg 2 amber
+  // dashed (the GO bus/train connection).
+  const isTransit = route.travelMode === "TRANSIT";
+  const accessColor = isTransit ? "#e0b25a" : modeDef.color || "#8257e6";
+  const transitColor = isTransit ? "#6ea8fe" : "#e0b25a";
 
   const g1 = route.toStation && route.toStation.geometry;
   const g2 = route.fromStation && route.fromStation.geometry;
@@ -897,9 +960,14 @@ function drawRoute(route) {
         opacity: 0.95,
         lineJoin: "round",
         lineCap: "round",
-      }).bindTooltip(`${modeDef.label} to ${route.station.name}`, {
-        sticky: true,
-      }),
+        // Access leg dashed only for transit (drive/Uber to the station).
+        dashArray: isTransit ? "2 10" : undefined,
+      }).bindTooltip(
+        isTransit
+          ? `Drive / Uber to ${route.station.name}`
+          : `${modeDef.label} to ${route.station.name}`,
+        { sticky: true },
+      ),
     );
   }
   if (hasBusLeg) {
@@ -908,9 +976,12 @@ function drawRoute(route) {
         color: transitColor,
         weight: 5,
         opacity: 0.95,
-        dashArray: "2 10",
+        // Transit leg is solid; a non-transit GO connection stays dashed.
+        dashArray: isTransit ? undefined : "2 10",
         lineCap: "round",
-      }).bindTooltip("GO bus / train", { sticky: true }),
+      }).bindTooltip(isTransit ? "Transit" : "GO bus / train", {
+        sticky: true,
+      }),
     );
   }
 
@@ -968,12 +1039,17 @@ function updateRouteLegend(route, accessColor, transitColor, modeDef, hasBusLeg)
     el.className = "route-legend";
     (document.querySelector(".map-container") || document.body).appendChild(el);
   }
+  const isTransit = route.travelMode === "TRANSIT";
   const rows = [
-    `<div class="rl-row"><span class="rl-swatch" style="background:${accessColor}"></span>${modeDef.label} to station</div>`,
+    isTransit
+      ? `<div class="rl-row"><span class="rl-swatch rl-dash" style="background:${accessColor}"></span>Drive / Uber to station</div>`
+      : `<div class="rl-row"><span class="rl-swatch" style="background:${accessColor}"></span>${modeDef.label} to station</div>`,
   ];
   if (hasBusLeg) {
     rows.push(
-      `<div class="rl-row"><span class="rl-swatch rl-dash" style="background:${transitColor}"></span>GO bus / train</div>`,
+      isTransit
+        ? `<div class="rl-row"><span class="rl-swatch" style="background:${transitColor}"></span>Transit</div>`
+        : `<div class="rl-row"><span class="rl-swatch rl-dash" style="background:${transitColor}"></span>GO bus / train</div>`,
     );
   }
   el.innerHTML = rows.join("");
@@ -1376,6 +1452,7 @@ function getCurrentLocationAsync() {
         resolve(currentLocation);
       },
       () => resolve(null),
+      GEO_OPTS,
     );
   });
 }
