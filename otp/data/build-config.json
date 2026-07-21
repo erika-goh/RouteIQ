@@ -1,0 +1,14 @@
+{
+  "//": "OTP 2.9 build config. OTP auto-detects the .osm.pbf and GTFS .zip in this directory. Keep this minimal; see https://docs.opentripplanner.org/en/latest/BuildConfiguration/",
+  "transitFeeds": [
+    {
+      "type": "gtfs",
+      "source": "GO-GTFS.zip"
+    }
+  ],
+  "osm": [
+    {
+      "source": "gta.osm.pbf"
+    }
+  ]
+}

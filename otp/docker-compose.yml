@@ -1,0 +1,24 @@
+# Local OpenTripPlanner (OTP) 2.9 for RouteIQ — real multi-leg GO itineraries.
+#
+# Usage:
+#   1) ./fetch-data.sh          # download GO GTFS + GTA OSM into ./data
+#   2) docker compose up        # builds the graph in memory, then serves on :8080
+#
+# Test:  http://localhost:8080  (debug UI)
+#        GraphQL: POST http://localhost:8080/otp/routers/default/index/graphql
+#
+# The graph is built in-memory on each start (--build --serve). For faster
+# restarts, build once with `--build --save` and switch the command to
+# `--load --serve` (see ROUTING.md).
+services:
+  otp:
+    image: docker.io/opentripplanner/opentripplanner:2.9.0
+    # OTP needs a lot of heap to build the graph. GTA-cropped OSM keeps this
+    # modest; full Ontario OSM may need 6g+.
+    environment:
+      - JAVA_TOOL_OPTIONS=-Xmx4g
+    command: ["--build", "--serve"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/var/opentripplanner

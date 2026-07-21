@@ -1,0 +1,8 @@
+# Downloaded / generated OTP inputs — do not commit (large, regenerable).
+*.zip
+*.pbf
+*.obj
+graph*.obj
+streetGraph*.obj
+!build-config.json
+!router-config.json

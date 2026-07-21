@@ -1,0 +1,18 @@
+{
+  "//": "OTP 2.9 router config. The GTFS GraphQL API is enabled by default at /otp/routers/default/index/graphql.",
+  "routingDefaults": {
+    "numItineraries": 3,
+    "transferSlack": 120,
+    "walkSpeed": 1.3
+  },
+  "//updaters": "OPTIONAL: add GO GTFS-realtime for live delays/alerts. Confirm the current Metrolinx GTFS-rt URLs on their Open Data portal before enabling.",
+  "updaters": [
+    {
+      "//": "Example — VERIFY the real GO GTFS-rt TripUpdates URL before using.",
+      "type": "stop-time-updater",
+      "feedId": "GO",
+      "frequency": "30s",
+      "url": "https://REPLACE-with-GO-gtfs-rt-tripupdates"
+    }
+  ]
+}
