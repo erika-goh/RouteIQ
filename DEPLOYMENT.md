@@ -29,20 +29,23 @@ This app is designed to run at **$0 with no billing account**:
 
 - **Map, routing, address search** use free OpenStreetMap-based services — no
   API key, no credit card, no Google Cloud billing.
-- **Gemini AI** runs on the **free tier**, which requires billing to be
-  **disabled** on the Google Cloud project (enabling billing removes the free
-  tier). The free tier only covers Flash / Flash-Lite models — set `GEMINI_MODEL`
-  to whatever Google AI Studio lists as free for your project.
-- If Gemini is unavailable for any reason, the assistant automatically falls
+- **AI** runs through the **Vercel AI Gateway**, which includes **$5/month of
+  free credits** per team — enough for a demo — with no separate provider
+  billing. Auth on Vercel is automatic via the OIDC token (no API key to set).
+  Set `GEMINI_MODEL` to change the routed model (default
+  `google/gemini-3.5-flash-lite`).
+- If the AI is unavailable for any reason, the assistant automatically falls
   back to smart, data-driven offline responses.
 
 ## AI architecture (important)
 
-The Gemini API key is **never** shipped to the browser. The client (`gemini.js`)
-POSTs to the `/api/chat` serverless function, which reads `GEMINI_API_KEY` from
-the server environment and calls Gemini. If the key/backend is unavailable
-(e.g. plain static hosting or local `http-server`), the assistant automatically
-falls back to smart, data-driven offline responses — so the demo never looks
+No AI key is shipped to the browser. The client (`gemini.js`) POSTs to the
+`/api/chat` serverless function, which uses the Vercel AI SDK to route through
+the AI Gateway (authenticated by the server-side OIDC token / `AI_GATEWAY_API_KEY`)
+— the browser never sees credentials. The function also enforces an origin
+allowlist, a prompt-length cap, and a best-effort rate limit. If the gateway is
+unavailable (e.g. plain static hosting, or a local run without `vercel env pull`),
+the assistant automatically falls back to smart, data-driven offline responses — so the demo never looks
 broken.
 
 ## Getting Started
@@ -68,8 +71,9 @@ Open http://localhost:8000. The map, routing, and address search all work here.
 
 4. **Full local preview with real AI** (runs the `/api/chat` function locally):
 ```bash
-echo "GEMINI_API_KEY=your_key_here" > .env.local   # .env.local is gitignored
-npx vercel dev
+vercel link                  # connect the project (once)
+vercel env pull .env.local   # writes VERCEL_OIDC_TOKEN (AI Gateway auth) + GO_TRANSIT_API_KEY
+npx vercel dev               # OIDC tokens expire ~24h — re-pull if AI returns 503 locally
 ```
 
 ## Deployment
@@ -84,11 +88,12 @@ npx vercel dev
    - Import your GitHub repository
    - Click "Import"
 
-3. **Add Environment Variable** (in the Vercel account/team that owns the project):
-   - Dashboard: Settings → Environment Variables
-   - Add `GEMINI_API_KEY` = your Gemini key (server-side — do NOT prefix with `NEXT_PUBLIC`)
-   - Apply to Production (and Preview if you use preview URLs) → Save
-   - Or via CLI: `vercel env add GEMINI_API_KEY` (must be logged into the owning account/team)
+3. **Enable AI Gateway** (in the Vercel account/team that owns the project):
+   - Dashboard: Settings → AI Gateway → enable. Auth is automatic via the OIDC
+     token on Vercel deployments — no API key to add.
+   - Add `GO_TRANSIT_API_KEY` under Settings → Environment Variables (server-side).
+   - Optional: `AI_GATEWAY_API_KEY` (only for non-Vercel hosts), `GEMINI_MODEL`,
+     `ALLOWED_ORIGINS`, `OTP_URL`.
 
 4. **Deploy / Redeploy**:
    - Vercel auto-deploys on push to main
@@ -112,7 +117,7 @@ routeiq/
 ├── app.js             # Route finding & navigation logic
 ├── gemini.js          # AI assistant client (calls /api/chat, offline fallback)
 ├── api/
-│   └── chat.js        # Serverless Gemini proxy (holds GEMINI_API_KEY)
+│   └── chat.js        # Serverless AI proxy (Vercel AI Gateway via AI SDK)
 ├── config.js          # App constants (stations, routes) — no secrets
 ├── go-transit-api.js  # GO Transit API wrapper
 ├── package.json       # Project metadata
@@ -155,9 +160,10 @@ Having issues? Check:
 - The map/routing/search need internet access to OpenStreetMap-based services
   (unpkg for Leaflet, CARTO tiles, routing.openstreetmap.de, photon.komoot.io) —
   no keys required
-- For real AI: `GEMINI_API_KEY` is set in Vercel (Production), billing is
-  **disabled** on the Google Cloud project (free tier), and `GEMINI_MODEL` points
-  at a free Flash model; redeploy after changing env vars
+- For real AI: **AI Gateway is enabled** for the project (Settings → AI Gateway),
+  the deployment has a valid OIDC token (automatic on Vercel), and — locally —
+  `.env.local` has a fresh `VERCEL_OIDC_TOKEN` from `vercel env pull`; redeploy
+  after changing env vars
 - Location features need you to allow geolocation in the browser
 - LocalStorage is enabled in your browser
 

@@ -38,8 +38,9 @@ Browser (index.html + app.js)
   ├── Leaflet + CARTO/OSM tiles        (no key)
   ├── OSRM routing (routing.openstreetmap.de)   (no key)
   ├── Photon geocoding (photon.komoot.io)       (no key)
-  ├── /api/chat        → Gemini            (GEMINI_API_KEY, server-side)
-  └── /api/gotransit   → Metrolinx Open Data (GO_TRANSIT_API_KEY, server-side)
+  ├── /api/chat        → Vercel AI Gateway → Gemini   (OIDC auth, server-side)
+  ├── /api/gotransit   → Metrolinx Open Data (GO_TRANSIT_API_KEY, server-side)
+  └── /api/plan        → OpenTripPlanner (OTP_URL, optional — see otp/ROUTING.md)
 ```
 
 Both proxies degrade gracefully: if a key or upstream is unavailable, the AI
@@ -52,7 +53,7 @@ the site stays current day to day with no maintenance.
 - **Frontend:** vanilla HTML/CSS/JS (ES6+), Leaflet
 - **Map/routing/search:** OpenStreetMap + CARTO tiles, OSRM, Photon
 - **Transit data:** Metrolinx Open Data (GO Transit) REST API
-- **AI:** Google Gemini (`gemini-flash-lite-latest`) via a serverless proxy
+- **AI:** Vercel AI Gateway + AI SDK (`ai` v6), routing to Gemini (`google/gemini-3.5-flash-lite`) with provider failover
 - **Hosting:** Vercel (static site + Node serverless functions)
 - **Storage:** browser `localStorage`
 
@@ -66,8 +67,9 @@ npx http-server -p 8000 -c-1
 # open http://localhost:8000
 
 # Full local run with real AI + live GO data (runs the serverless functions):
-printf "GEMINI_API_KEY=your_key\nGO_TRANSIT_API_KEY=your_key\n" > .env.local  # gitignored
-npx vercel dev
+vercel link          # once, to connect the project
+vercel env pull .env.local   # provisions VERCEL_OIDC_TOKEN (AI Gateway auth) + GO_TRANSIT_API_KEY
+npx vercel dev       # note: OIDC tokens expire ~24h — re-pull when AI 503s locally
 ```
 
 ## Deploying (Vercel)
@@ -77,9 +79,11 @@ npx vercel dev
 
    | Variable | Purpose |
    | --- | --- |
-   | `GEMINI_API_KEY` | Gemini API key ([AI Studio](https://aistudio.google.com/apikey)). Keep Google Cloud **billing disabled** to stay on the free tier. |
+   | *(AI Gateway auth)* | Enable **AI Gateway** in the Vercel dashboard. On Vercel, auth is automatic via the OIDC token — no key to set. ($5/mo free credits.) For non-Vercel hosts, set `AI_GATEWAY_API_KEY`. |
    | `GO_TRANSIT_API_KEY` | Metrolinx Open Data (GO Transit) API key. |
-   | `GEMINI_MODEL` *(optional)* | Override the model; defaults to `gemini-flash-lite-latest`. |
+   | `GEMINI_MODEL` *(optional)* | Override the model; defaults to `google/gemini-3.5-flash-lite`. |
+   | `ALLOWED_ORIGINS` *(optional)* | Extra comma-separated origins allowed to call `/api/chat` (own `*.vercel.app` + localhost are always allowed). |
+   | `OTP_URL` *(optional)* | Base URL of a deployed OpenTripPlanner instance for real transit itineraries. See [`otp/ROUTING.md`](otp/ROUTING.md). |
 
 3. Redeploy — env vars only apply to new deployments.
 
@@ -96,7 +100,7 @@ RouteIQ/
 ├── go-transit-api.js   # Metrolinx client (live departures + alerts) via proxy
 ├── config.js           # Stations + constants (no secrets)
 ├── api/
-│   ├── chat.js         # Gemini proxy (GEMINI_API_KEY)
+│   ├── chat.js         # AI proxy (Vercel AI Gateway via AI SDK)
 │   └── gotransit.js    # Metrolinx proxy (GO_TRANSIT_API_KEY)
 └── vercel.json         # Static + functions config
 ```
