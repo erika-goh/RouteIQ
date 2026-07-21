@@ -13,5 +13,8 @@
     "AI assistant"
   ],
   "author": "Erik",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "ai": "^6.0.233"
+  }
 }

@@ -8,6 +8,9 @@
     },
     "api/gotransit.js": {
       "maxDuration": 30
+    },
+    "api/plan.js": {
+      "maxDuration": 30
     }
   }
 }
