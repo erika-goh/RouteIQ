@@ -81,6 +81,10 @@ class GeminiAssistant {
       .map((s) => `${s.name} [${s.code}]`)
       .join("; ");
 
+    const campuses = (typeof CONFIG !== "undefined" ? CONFIG.CAMPUSES || [] : [])
+      .map((c) => `${c.name} (aka ${c.short})`)
+      .join("; ");
+
     const dataLines = [];
     if (context.routes && context.routes !== "No routes found yet")
       dataLines.push(`Current route options:\n${context.routes}`);
@@ -89,7 +93,7 @@ class GeminiAssistant {
       dataLines.push(`Next departures: ${context.busSchedule}`);
     const dataBlock = dataLines.length ? dataLines.join("\n") : "none yet";
 
-    const prompt = `You are RouteIQ's trip-planning agent for GO Transit in the Greater Toronto Area.
+    const prompt = `You are RouteIQ's trip-planning agent for GO Transit in the Greater Toronto Area, helping university/college students.
 Return ONLY a JSON object (no markdown, no code fence) with EXACTLY this shape:
 {
  "reply": string,
@@ -104,13 +108,18 @@ Return ONLY a JSON object (no markdown, no code fence) with EXACTLY this shape:
 GO stations — for kind "station", set "value" to the CODE in brackets:
 ${stations}
 
+Campuses students go to — treat these as destination kind "custom" with value = the FULL name below (map nicknames too):
+${campuses}
+
 Rules:
 - Map any named GO station to the closest code above. Any other place/address => kind "custom" with value = the place text.
 - "my location" / "current location" / "here" => origin kind "current".
-- "arrivalTime" must be "HH:MM" 24-hour, or null.
+- CLASS-TIME BACK-SOLVE: if the user gives a class/arrival time ("for my 10am lecture", "need to be at Mac by 2pm", "get me there by 9:30"), set "arrivalTime" to that time. "arrivalTime" must be "HH:MM" 24-hour, or null. Interpret bare "10am"=>"10:00", "2pm"=>"14:00".
 - Set "search" TRUE only when BOTH origin and destination are known; then "needMore" is false.
 - If something required is missing, set "search" false, "needMore" true, and make "reply" ask ONLY for the missing piece.
-- CRITICAL: keep "reply" to ONE short sentence. NEVER invent or state route options, bus numbers, departure times, durations, distances, or CO2 — the app calculates and displays those. When you set a trip, reply like "Planning your trip from A to B — showing your options now."
+- CRITICAL: NEVER invent or state route options, bus numbers, departure times, durations, distances, fares, or CO2 — the app calculates and displays those. When you set a trip, reply like "Planning your trip from A to B — showing your options now."
+- Tone: friendly, clear, and concise, like a helpful classmate. At most one emoji.
+- Keep "reply" to ONE short sentence.
 - If the user is only asking a question about the current results, set origin/destination null and search false, and answer briefly using ONLY this data:
 ${dataBlock}
 
@@ -153,16 +162,19 @@ User message: "${userMessage}"`;
       });
     };
 
-    const m =
-      msg.match(/from (.+?) to (.+)/) || msg.match(/to (.+?) from (.+)/);
+    // Decide direction by WHICH pattern matched, not whether the whole message
+    // starts with "from" (it usually doesn't, e.g. "I want to travel from A to B").
+    const fromTo = msg.match(/from (.+?) to (.+)/);
+    const toFrom = msg.match(/to (.+?) from (.+)/);
+    const m = fromTo || toFrom;
     if (m) {
       let a, b;
-      if (/^\s*from/.test(msg)) {
-        a = m[1];
-        b = m[2];
+      if (fromTo) {
+        a = fromTo[1]; // origin follows "from"
+        b = fromTo[2]; // destination follows "to"
       } else {
-        b = m[1];
-        a = m[2];
+        b = toFrom[1]; // destination follows "to"
+        a = toFrom[2]; // origin follows "from"
       }
       const so = matchStation(a);
       const sd = matchStation(b);
@@ -400,13 +412,23 @@ Guidelines:
   }
 }
 
+// Escape HTML so untrusted text (model output can echo the user's message)
+// can't inject markup when inserted via innerHTML.
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // Helper function to format AI responses with markdown
 function formatAIResponse(text) {
-  // Convert markdown-style formatting to HTML.
-  // Handle bullet lists BEFORE turning newlines into <br> (the list regex is
-  // line-anchored and would otherwise never match).
+  // Escape FIRST, then apply our own safe markup — the only tags we emit are
+  // <strong>/<em>/<ul>/<li>/<br>. Anything in the model/user text is inert.
   return (
-    text
+    escapeHtml(text)
       .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
       .replace(/\*(.*?)\*/g, "<em>$1</em>")
       // Group consecutive "- " lines into a single <ul>.
@@ -423,5 +445,5 @@ function formatAIResponse(text) {
 
 // Export for use in other files
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { GeminiAssistant, formatAIResponse };
+  module.exports = { GeminiAssistant, formatAIResponse, escapeHtml };
 }
