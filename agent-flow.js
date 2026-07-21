@@ -431,16 +431,16 @@ async function runTripSearch() {
     );
   }
 
-  // Refresh service alerts now, and keep them (and this trip) fresh while open.
-  if (typeof loadServiceUpdates === "function") loadServiceUpdates();
+  // Route-tailored alerts already loaded via selectRoute(); keep them fresh so
+  // delays/cancellations for THIS route surface while the trip is open.
   startAlertPolling();
 }
 
-// Poll GO service updates every 60s so cancellations / delays surface while the
-// user is looking at their trip. Cleared when a new search starts.
+// Re-check the active route's alerts every 60s so cancellations / delays for the
+// chosen route surface live. Cleared when a new search starts.
 function startAlertPolling() {
   if (alertPoller) clearInterval(alertPoller);
   alertPoller = setInterval(() => {
-    if (typeof loadServiceUpdates === "function") loadServiceUpdates();
+    if (typeof refreshActiveRouteAlerts === "function") refreshActiveRouteAlerts();
   }, 60000);
 }

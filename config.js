@@ -216,7 +216,7 @@ const CONFIG = {
     { name: "University of Toronto (St. George)", short: "UofT", lat: 43.6629, lng: -79.3957 },
     { name: "Toronto Metropolitan University", short: "TMU", lat: 43.6577, lng: -79.3788 },
     { name: "York University (Keele)", short: "York U", lat: 43.7735, lng: -79.5019 },
-    { name: "McMaster University", short: "Mac", lat: 43.2609, lng: -79.9192 },
+    { name: "McMaster University", short: "McMaster", lat: 43.2609, lng: -79.9192 },
     { name: "Sheridan College (Oakville)", short: "Sheridan", lat: 43.4675, lng: -79.6997 },
     { name: "Ontario Tech University (Oshawa)", short: "Ontario Tech", lat: 43.9450, lng: -78.8963 },
     { name: "University of Guelph", short: "Guelph", lat: 43.5310, lng: -80.2262 },

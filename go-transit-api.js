@@ -59,6 +59,73 @@ class GOTransitService {
   }
 
   /**
+   * Real Metrolinx alerts RELEVANT to a specific trip — filtered by keywords
+   * (the chosen route's station name / city / code). Schema-agnostic: it finds
+   * each alert object in the live payload and keeps only those whose own content
+   * mentions one of the keywords, so a Brampton alert never shows on a trip that
+   * doesn't touch Brampton. Returns [] when nothing relevant (never fabricates).
+   */
+  async getAlertsForKeywords(keywords) {
+    if (!Array.isArray(keywords) || keywords.length === 0) return [];
+    const data = await this.fetchPath("api/V1/ServiceUpdate/InformationAlert/All");
+    if (!data) return [];
+
+    const kw = keywords.map((k) => String(k).toLowerCase()).filter((k) => k.length >= 3);
+    if (!kw.length) return [];
+
+    const alerts = [];
+    this._collectAlerts(data, alerts);
+
+    const seen = new Set();
+    const out = [];
+    for (const a of alerts) {
+      const hay = a.text.toLowerCase();
+      if (kw.some((k) => hay.includes(k)) && a.message && !seen.has(a.message)) {
+        seen.add(a.message);
+        out.push({ message: a.message });
+      }
+    }
+    return out.slice(0, 4);
+  }
+
+  // Find alert-like objects (those carrying a subject/title/message string) and,
+  // for each, capture its short message + the flattened text of its whole subtree
+  // (so structured Line/Stop references are searchable, not just the message).
+  _collectAlerts(node, out) {
+    if (node == null) return;
+    if (Array.isArray(node)) {
+      node.forEach((n) => this._collectAlerts(n, out));
+      return;
+    }
+    if (typeof node !== "object") return;
+
+    let message = null;
+    for (const [k, v] of Object.entries(node)) {
+      if (
+        typeof v === "string" &&
+        v.trim().length > 8 &&
+        /(subjectenglish|subject|title|messageenglish|message|bodyenglish|body|description)/i.test(k)
+      ) {
+        if (!message || /subject|title/i.test(k)) message = v.trim();
+      }
+    }
+    if (message) {
+      const acc = [];
+      this._flatten(node, acc);
+      out.push({ message, text: acc.join(" ") });
+      return; // don't treat this alert's children as separate alerts
+    }
+    for (const v of Object.values(node)) this._collectAlerts(v, out);
+  }
+
+  _flatten(node, acc) {
+    if (node == null) return;
+    if (Array.isArray(node)) return node.forEach((n) => this._flatten(n, acc));
+    if (typeof node === "object") return Object.values(node).forEach((v) => this._flatten(v, acc));
+    acc.push(String(node));
+  }
+
+  /**
    * Recursively pull time-like values ("HH:MM") from departure/time fields,
    * regardless of the exact response shape. Keeps only future times.
    */

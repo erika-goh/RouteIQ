@@ -15,25 +15,38 @@ const Gamification = (() => {
     { name: "GO Legend", xp: 2600 },
   ];
 
-  // Badge catalog. `test(s)` gets a snapshot: { trips, timeSaved, co2Saved,
-  // streak, longestStreak, modes:{}, stations:Set-size, earlyBird, nightOwl }.
+  // Difficulty scales with level: milestone badges you HAVEN'T earned yet get
+  // harder the more you level up, so late-game badges stay meaningful. Entry,
+  // one-off, and calendar-streak badges keep fixed thresholds (scaling those
+  // would be punishing). Already-earned badges never re-lock.
+  function mult(level) {
+    return 1 + 0.25 * (level || 0); // Lv1 → 1×, Lv6 → 2.25×
+  }
+  const need = (base, s) => Math.ceil(base * mult(s.level));
+
+  // Badge catalog. `test(s)` / `desc(s)` get a snapshot: { trips, timeSaved,
+  // co2Saved, streak, longestStreak, modes:{}, stations:Set-size, earlyBird,
+  // nightOwl, level }. `desc` may be a string or a function of the snapshot.
   const I = typeof UI_ICONS !== "undefined" ? UI_ICONS : {};
   const BADGES = [
     { id: "first", icon: I.ticket, name: "First Ride", desc: "Plan your first trip", test: (s) => s.trips >= 1 },
-    { id: "trips10", icon: I.bus, name: "Getting Around", desc: "Plan 10 trips", test: (s) => s.trips >= 10 },
-    { id: "trips50", icon: I.trophy, name: "Commuter", desc: "Plan 50 trips", test: (s) => s.trips >= 50 },
-    { id: "trips100", icon: I.crown, name: "Centurion", desc: "Plan 100 trips", test: (s) => s.trips >= 100 },
+    { id: "trips10", icon: I.bus, name: "Getting Around", scales: true, desc: (s) => `Plan ${need(10, s)} trips`, test: (s) => s.trips >= need(10, s) },
+    { id: "trips50", icon: I.trophy, name: "Commuter", scales: true, desc: (s) => `Plan ${need(50, s)} trips`, test: (s) => s.trips >= need(50, s) },
+    { id: "trips100", icon: I.crown, name: "Centurion", scales: true, desc: (s) => `Plan ${need(100, s)} trips`, test: (s) => s.trips >= need(100, s) },
     { id: "streak3", icon: I.flame, name: "On a Roll", desc: "3-day streak", test: (s) => s.longestStreak >= 3 },
     { id: "streak7", icon: I.bolt, name: "Week Strong", desc: "7-day streak", test: (s) => s.longestStreak >= 7 },
     { id: "streak14", icon: I.gem, name: "Unstoppable", desc: "14-day streak", test: (s) => s.longestStreak >= 14 },
     { id: "eco5", icon: I.leaf, name: "Eco Starter", desc: "Save 5 kg CO₂", test: (s) => s.co2Saved >= 5 },
-    { id: "eco25", icon: I.tree, name: "Planet Ally", desc: "Save 25 kg CO₂", test: (s) => s.co2Saved >= 25 },
+    { id: "eco25", icon: I.tree, name: "Planet Ally", scales: true, desc: (s) => `Save ${need(25, s)} kg CO₂`, test: (s) => s.co2Saved >= need(25, s) },
     { id: "bike", icon: I.bike, name: "Pedal Power", desc: "Bike to a station", test: (s) => (s.modes.BICYCLING || 0) >= 1 },
-    { id: "explorer", icon: I.compass, name: "Explorer", desc: "Use 5 different stations", test: (s) => s.stations >= 5 },
+    { id: "explorer", icon: I.compass, name: "Explorer", scales: true, desc: (s) => `Use ${need(5, s)} different stations`, test: (s) => s.stations >= need(5, s) },
     { id: "early", icon: I.sunrise, name: "Early Bird", desc: "Plan a trip before 7am", test: (s) => s.earlyBird },
     { id: "night", icon: I.moon, name: "Night Owl", desc: "Plan a trip after 9pm", test: (s) => s.nightOwl },
-    { id: "saver", icon: I.timer, name: "Time Bandit", desc: "Save 5 hours total", test: (s) => s.timeSaved >= 300 },
+    { id: "saver", icon: I.timer, name: "Time Bandit", scales: true, desc: (s) => `Save ${Math.round(need(300, s) / 60)} hours total`, test: (s) => s.timeSaved >= need(300, s) },
   ];
+
+  // desc may be a string or a function of the snapshot.
+  const descOf = (b, s) => (typeof b.desc === "function" ? b.desc(s) : b.desc);
 
   function load() {
     try {
@@ -111,7 +124,7 @@ const Gamification = (() => {
   function snapshot() {
     const state = load();
     const ls = typeof lifetimeStats !== "undefined" ? lifetimeStats : { trips: 0, timeSaved: 0, co2Saved: 0 };
-    return {
+    const snap = {
       trips: ls.trips || 0,
       timeSaved: ls.timeSaved || 0,
       co2Saved: ls.co2Saved || 0,
@@ -123,6 +136,8 @@ const Gamification = (() => {
       nightOwl: state.nightOwl,
       _state: state,
     };
+    snap.level = levelFor(xp(snap)); // badge difficulty scales with this
+    return snap;
   }
 
   // Persist any badge whose condition is currently met. Returns the (possibly
@@ -180,7 +195,7 @@ const Gamification = (() => {
     }
     freshBadges.forEach((b, i) =>
       setTimeout(
-        () => toast("Badge unlocked", `${b.name} — ${b.desc}`, b.icon),
+        () => toast("Badge unlocked", `${b.name} — ${descOf(b, snap)}`, b.icon),
         (i + (newLevel > prevLevel ? 1 : 0)) * 900,
       ),
     );
@@ -215,7 +230,7 @@ const Gamification = (() => {
 
     badgesEl.innerHTML = BADGES.map((b) => {
       const earned = snap._state.unlocked.includes(b.id);
-      return `<div class="badge ${earned ? "earned" : "locked"}" title="${b.name} — ${b.desc}">
+      return `<div class="badge ${earned ? "earned" : "locked"}" title="${b.name} — ${descOf(b, snap)}">
         <span class="badge-icon">${b.icon}</span>
       </div>`;
     }).join("");

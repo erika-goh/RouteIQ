@@ -246,6 +246,55 @@ const GroupTrip = (() => {
     }
   }
 
+  const COPY_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+
+  function fallbackCopy(text) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard
+        .writeText(text)
+        .then(() => true)
+        .catch(() => fallbackCopy(text));
+    }
+    return Promise.resolve(fallbackCopy(text));
+  }
+
+  // Build a shareable "let's meet here" message with a Google Maps link and copy
+  // it to the clipboard, so it can be pasted straight into a group chat.
+  function copyMeetingLocation(res, btn) {
+    const { lat, lng, name } = res.station;
+    const link = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+    const text = `Let's meet at ${name}: ${link}`;
+    copyText(text).then((ok) => {
+      if (ok && btn) {
+        btn.classList.add("copied");
+        btn.textContent = "Copied to clipboard";
+        setTimeout(() => {
+          btn.classList.remove("copied");
+          btn.innerHTML = `<span class="gt-copy-ic">${COPY_ICON}</span>Copy location to share`;
+        }, 1800);
+      } else if (!ok) {
+        addAlert("info", "Copy this to share", text);
+      }
+    });
+  }
+
   function renderResults(results, people, dest) {
     const wrap = el("group-results");
     wrap.style.display = "block";
@@ -266,14 +315,26 @@ const GroupTrip = (() => {
             ${idx === 0 ? '<div class="route-badge">Fairest</div>' : ""}
           </div>
           <div class="group-meta">
-            <div><span class="group-meta-label">Worst commute</span><span class="group-meta-val">${res.worst} min</span></div>
-            <div><span class="group-meta-label">Total</span><span class="group-meta-val">${res.total} min</span></div>
+            <div title="The longest single person's trip to this stop. The fairest stop keeps this as low as possible.">
+              <span class="group-meta-label">Longest trip</span><span class="group-meta-val">${res.worst} min</span>
+            </div>
+            <div title="Everyone's travel times added together.">
+              <span class="group-meta-label">Total</span><span class="group-meta-val">${res.total} min</span>
+            </div>
             ${onward}
           </div>
           <div class="group-people">${chips}</div>
+          <button class="gt-copy" data-i="${idx}" type="button"><span class="gt-copy-ic">${COPY_ICON}</span>Copy location to share</button>
         </div>`;
       })
       .join("");
+
+    wrap.querySelectorAll(".gt-copy").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        copyMeetingLocation(results[parseInt(btn.dataset.i)], btn);
+      }),
+    );
     wrap.querySelectorAll(".route-card").forEach((card) =>
       card.addEventListener("click", () => {
         const i = parseInt(card.dataset.i);
@@ -288,13 +349,42 @@ const GroupTrip = (() => {
     clearLayer();
     const stationLoc = [res.station.lat, res.station.lng];
     const layers = [
+      // Light-purple highlight so the selected meeting spot stands out.
+      L.circleMarker(stationLoc, {
+        radius: 28,
+        stroke: false,
+        fillColor: "#9d84f0",
+        fillOpacity: 0.18,
+        interactive: false,
+      }),
+      L.circleMarker(stationLoc, {
+        radius: 17,
+        color: "#b9a5f5",
+        weight: 2,
+        opacity: 0.7,
+        fillColor: "#9d84f0",
+        fillOpacity: 0.12,
+        interactive: false,
+      }),
+      // Animated pulse ring.
+      L.marker(stationLoc, {
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({
+          className: "",
+          html: '<div class="meet-pulse"></div>',
+          iconSize: [44, 44],
+          iconAnchor: [22, 22],
+        }),
+      }),
+      // Solid meeting pin on top.
       L.circleMarker(stationLoc, {
         radius: 9,
         color: "#0b0d14",
         weight: 3,
         fillColor: "#8257e6",
         fillOpacity: 1,
-      }).bindTooltip(`Meet: ${res.station.name}`),
+      }).bindTooltip(`Meet here: ${res.station.name}`, { permanent: false }),
     ];
     people.forEach((p, i) => {
       layers.push(

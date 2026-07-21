@@ -82,9 +82,8 @@ function initializeApp() {
   Gamification.init();
   GroupTrip.init();
 
-  loadServiceUpdates().catch(() => {
-    // Service updates are optional, silently fail
-  });
+  // Service alerts are NOT loaded globally anymore — they're fetched per chosen
+  // route (see loadRouteAlerts in selectRoute) so they stay relevant.
 }
 
 function initMap() {
@@ -131,6 +130,7 @@ function setupEventListeners() {
     ?.addEventListener("click", refreshCurrentLocation);
 
   document.getElementById("find-routes").addEventListener("click", findRoutes);
+  document.getElementById("reset-plan")?.addEventListener("click", resetPlanner);
 
   document
     .getElementById("travel-mode")
@@ -1036,6 +1036,10 @@ function selectRoute(index) {
   recommendForArrival(route);
   calculateLeaveTime(route);
 
+  // Show ONLY the disruptions that affect this route's station (real Metrolinx
+  // data, filtered) — replaces the old global alert dump.
+  loadRouteAlerts(route);
+
   if (route.isLive) {
     addAlert(
       "info",
@@ -1485,7 +1489,7 @@ function centerMap() {
 }
 
 /* ---------------- Alerts ---------------- */
-function addAlert(type, title, message) {
+function addAlert(type, title, message, kind = null) {
   const container = document.getElementById("alerts-list");
   document.getElementById("alerts-section").style.display = "block";
 
@@ -1500,17 +1504,62 @@ function addAlert(type, title, message) {
 
   const alert = document.createElement("div");
   alert.className = `alert alert-${type}`;
+  if (kind) alert.dataset.alertKind = kind; // e.g. "service" — so we can clear/replace them per route
   const icon = ICONS[type] || ICONS.info;
+  const esc = typeof escapeHtml === "function" ? escapeHtml : (s) => s;
+  // title/message can include third-party (Metrolinx) text — escape it.
   alert.innerHTML = `
     <div class="alert-icon">${icon}</div>
     <div class="alert-content">
-      <div class="alert-title">${title}</div>
-      <div class="alert-message">${message}</div>
+      <div class="alert-title">${esc(title)}</div>
+      <div class="alert-message">${esc(message || "")}</div>
     </div>`;
 
   container.insertBefore(alert, container.firstChild);
-  while (container.children.length > 3) {
+  while (container.children.length > 4) {
     container.removeChild(container.lastChild);
+  }
+}
+
+/* ---------------- Route-tailored service alerts ---------------- */
+// Real Metrolinx alerts, filtered to the CHOSEN route's station (city/code) so
+// only relevant disruptions surface — never global or fabricated ones.
+function routeAlertKeywords(route) {
+  if (!route || !route.station) return [];
+  const k = [];
+  const name = route.station.name || "";
+  k.push(name);
+  const city = name.replace(/\s+(GO|Bus|Train|Terminal|Centre|Center|Station|&).*$/i, "").trim();
+  if (city.length >= 3) k.push(city);
+  if (route.station.code) k.push(String(route.station.code));
+  return [...new Set(k)];
+}
+
+function clearServiceAlerts() {
+  document
+    .querySelectorAll('#alerts-list [data-alert-kind="service"]')
+    .forEach((el) => el.remove());
+}
+
+async function loadRouteAlerts(route) {
+  if (!goTransitService || !route || !route.station) return;
+  clearServiceAlerts(); // drop the previous route's alerts before loading this one's
+  try {
+    const alerts = await goTransitService.getAlertsForKeywords(routeAlertKeywords(route));
+    alerts
+      .slice(0, 2)
+      .forEach((a) =>
+        addAlert("warning", `Service alert · ${route.station.name}`, a.message, "service"),
+      );
+  } catch (e) {
+    /* alerts are best-effort */
+  }
+}
+
+// Re-check the active route's alerts (used by the 60s poller during a trip).
+function refreshActiveRouteAlerts() {
+  if (activeRouteIndex != null && routes[activeRouteIndex]) {
+    loadRouteAlerts(routes[activeRouteIndex]);
   }
 }
 
@@ -1572,6 +1621,52 @@ function renderCampusChips() {
   wrap.querySelectorAll(".campus-chip").forEach((chip) =>
     chip.addEventListener("click", () => setCampusDestination(CONFIG.CAMPUSES[parseInt(chip.dataset.i)])),
   );
+}
+
+// Reset the planner back to a clean, empty state — clears origin/destination,
+// time, mode, results, markers, the drawn route, alerts, and any live nav.
+function resetPlanner() {
+  if (typeof Navigation !== "undefined" && Navigation.active && Navigation.active()) {
+    Navigation.stop();
+  }
+
+  currentLocation = null;
+  destinationLocation = null;
+  originLocationFromStation = null;
+  originPlace = null;
+  destinationPlace = null;
+  activeRouteIndex = null;
+  selectedBusTime = null;
+  currentBusSchedule = [];
+  routes.length = 0;
+  isNavigating = false;
+  try { if (typeof tripPicker !== "undefined") tripPicker = null; } catch (e) {}
+
+  // Markers + drawn route.
+  if (userMarker) { userMarker.remove(); userMarker = null; }
+  if (destinationMarker) { destinationMarker.remove(); destinationMarker = null; }
+  if (routeLayer) { routeLayer.remove(); routeLayer = null; }
+
+  // Inputs back to defaults (rebuilds the origin/destination containers).
+  setRadio("origin-type", "location");
+  setRadio("dest-type", "custom");
+  const arr = document.getElementById("arrival-time"); if (arr) arr.value = "";
+  const tm = document.getElementById("travel-mode"); if (tm) tm.value = "WALKING";
+  document.querySelectorAll(".campus-chip.active").forEach((c) => c.classList.remove("active"));
+
+  // Hide + clear result / alert sections.
+  ["routes-section", "bus-section", "alerts-section"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = "none";
+  });
+  ["routes-list", "bus-schedule-container", "alerts-list"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = "";
+  });
+  const summary = document.getElementById("trip-summary"); if (summary) summary.remove();
+
+  // Recenter the map to the default GTA view.
+  if (map) map.setView([43.6532, -79.3832], 12);
 }
 
 function setCampusDestination(campus) {
