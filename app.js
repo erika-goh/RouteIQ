@@ -2,7 +2,7 @@
 // Map:      Leaflet + CARTO/OSM tiles (no key, no billing)
 // Routing:  OSRM (FOSSGIS public instances, no key)
 // Search:   Photon geocoder (no key)
-let map, routeLayer, stationsLayer;
+let map, routeLayer, stationsLayer, poiLayer;
 let currentLocation = null;
 let destinationLocation = null;
 let originLocationFromStation = null;
@@ -49,6 +49,9 @@ let lifetimeStats = {
   reroutes: parseInt(localStorage.getItem("gobus_reroutes")) || 0,
 };
 
+// Cost lens: apply the 40% post-secondary discount when on.
+let studentFare = localStorage.getItem("routeiq_student_fare") === "1";
+
 // Initialize on load
 document.addEventListener("DOMContentLoaded", () => {
   initializeApp();
@@ -66,17 +69,18 @@ function initializeApp() {
   // Initialize map
   initMap();
 
-  // Set default arrival time (30 minutes from now)
-  const now = new Date();
-  now.setMinutes(now.getMinutes() + 30);
-  document.getElementById("arrival-time").value = now
-    .toTimeString()
-    .substring(0, 5);
+  // Leave "Desired Arrival Time" empty by default — a blank field means "no
+  // target", so the assistant won't warn about arriving late against a time the
+  // user never chose. Back-solving kicks in only once they set a real class time.
+  document.getElementById("arrival-time").value = "";
 
   updateStatsDisplay();
   setupEventListeners();
   initSidebarResizer();
   handleDestinationType();
+  renderCampusChips();
+  Gamification.init();
+  GroupTrip.init();
 
   loadServiceUpdates().catch(() => {
     // Service updates are optional, silently fail
@@ -89,17 +93,24 @@ function initMap() {
     12,
   );
 
+  // Detailed CARTO "Voyager" tiles (buildings, POIs, transit) rendered dark via
+  // a CSS filter on the tile pane, so the map keeps its black/purple colorway
+  // but shows far more detail than the minimal dark_all basemap.
   L.tileLayer(
-    "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
     {
       attribution:
         '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
       subdomains: "abcd",
       maxZoom: 20,
+      className: "riq-dark-tiles",
     },
   ).addTo(map);
 
   mapReady = true;
+
+  // Show GO stops + campuses by default for a more detailed map.
+  poiLayer = buildPoiLayer().addTo(map);
 
   // Leaflet needs a size recalc once the flex layout settles.
   setTimeout(() => map.invalidateSize(), 200);
@@ -466,6 +477,15 @@ async function findRoutes() {
     addAlert("warning", "Missing Destination", "Please enter a destination.");
     return;
   }
+  // Same origin and destination — a trip to yourself isn't a trip.
+  if (currentLocation.distanceTo(destinationLocation) < 200) {
+    addAlert(
+      "warning",
+      "Same location",
+      "Your origin and destination are basically the same spot — pick two different places.",
+    );
+    return;
+  }
 
   showLoading(true);
   routes.length = 0;
@@ -478,7 +498,9 @@ async function findRoutes() {
     ).value;
 
     // Build a list of genuinely different "legs to a station":
-    //  - custom destination  -> the 5 nearest stations (selected travel mode)
+    //  - custom destination  -> every travel mode to the nearest station, plus
+    //    a couple of alternative nearby stations, so options differ by BOTH mode
+    //    and station (not five identical "walk" cards).
     //  - station destination -> that one station, but with each travel mode,
     //    so the options actually differ (and rank by duration).
     const legs = [];
@@ -497,7 +519,21 @@ async function findRoutes() {
         });
       }
     } else {
-      findNearbyStations(currentLocation, 5).forEach((station) => {
+      // Skip the origin's own station if the origin IS a station.
+      const nearby = findNearbyStations(currentLocation, 4).filter(
+        (s) =>
+          !originLocationFromStation ||
+          s.code !== originLocationFromStation.code,
+      );
+      const nearest = nearby[0];
+      if (nearest) {
+        // Nearest station: offer every way to get there, so cards differ by mode.
+        ["WALKING", "BICYCLING", "DRIVING", "TRANSIT"].forEach((mode) => {
+          legs.push({ station: nearest, mode, needsBusLeg: true });
+        });
+      }
+      // A couple of alternative stations (in the selected mode) for variety.
+      nearby.slice(1, 3).forEach((station) => {
         legs.push({ station, mode: selectedMode, needsBusLeg: true });
       });
     }
@@ -586,6 +622,15 @@ async function findRoutes() {
           uniqueRoutes.push(route);
         }
       }
+      // Pin the user's chosen travel mode to the top (Array.sort is stable, so
+      // duration order is preserved within each group). Selecting "Transit"
+      // then surfaces the transit option first — the "Fastest" badge still goes
+      // to the genuinely shortest option wherever it lands (see displayRoutes).
+      uniqueRoutes.sort(
+        (a, b) =>
+          (a.travelMode === selectedMode ? 0 : 1) -
+          (b.travelMode === selectedMode ? 0 : 1),
+      );
       routes.length = 0;
       routes.push(...uniqueRoutes.slice(0, 6));
 
@@ -598,6 +643,9 @@ async function findRoutes() {
       lifetimeStats.co2Saved += routes[0].co2;
       saveStats();
       updateStatsDisplay();
+
+      // Update streaks / XP / badges off the fastest option.
+      Gamification.recordTrip(routes[0]);
 
       // No auto-generated analysis — the ranked route cards ARE the result.
       // The assistant only speaks when the user talks to it.
@@ -714,14 +762,24 @@ function displayRoutes() {
   const container = document.getElementById("routes-list");
   document.getElementById("routes-section").style.display = "block";
 
-  container.innerHTML = routes
-    .slice(0, 5)
-    .map((route, index) => {
-      const mode =
-        CONFIG.TRAVEL_MODES.find((m) => m.value === route.travelMode) ||
-        CONFIG.TRAVEL_MODES[0];
-      const isZeroCO2 = mode.zeroCO2 || false;
-      const co2Value = route.co2 || 0;
+  const displayed = routes.slice(0, 5);
+  // "Fastest" = the genuinely shortest-duration option, decoupled from position
+  // (the top card is the user's chosen travel mode, which may not be fastest).
+  let fastestIndex = 0;
+  displayed.forEach((r, i) => {
+    if (r.totalDuration < displayed[fastestIndex].totalDuration) fastestIndex = i;
+  });
+
+  container.innerHTML =
+    renderStudentToggle() +
+    displayed
+      .map((route, index) => {
+        const mode =
+          CONFIG.TRAVEL_MODES.find((m) => m.value === route.travelMode) ||
+          CONFIG.TRAVEL_MODES[0];
+        const isZeroCO2 = mode.zeroCO2 || false;
+        const co2Value = route.co2 || 0;
+        const cost = estimateTripCost(route);
 
       return `
         <div class="route-card ${index === 0 ? "active" : ""}" data-index="${index}">
@@ -730,7 +788,7 @@ function displayRoutes() {
               <span class="route-icon">${mode.icon}</span>
               ${mode.label}
             </div>
-            ${index === 0 ? '<div class="route-badge">Fastest</div>' : ""}
+            ${index === fastestIndex ? '<div class="route-badge">Fastest</div>' : ""}
             ${route.isLive ? '<div class="route-badge route-badge-live">● Live</div>' : ""}
             ${isZeroCO2 ? '<div class="route-badge" style="border-color: rgba(70,209,158,0.4); color: var(--green);">Zero Carbon</div>' : ""}
           </div>
@@ -776,8 +834,22 @@ function displayRoutes() {
           <div class="route-co2 ${isZeroCO2 ? "savings" : ""}">
             ${
               isZeroCO2
-                ? `🌱 ${co2Value.toFixed(1)} kg CO₂ saved vs driving`
+                ? `<span class="cost-ic">${UI_ICONS.leaf}</span>${co2Value.toFixed(1)} kg CO₂ saved vs driving`
                 : `${co2Value.toFixed(1)} kg CO₂`
+            }
+          </div>
+
+          <div class="route-cost">
+            <div class="route-cost-fare">
+              <span class="route-cost-label">GO fare${studentFare ? " · student" : ""}</span>
+              <span class="route-cost-value">~$${cost.fare.toFixed(2)}<span class="route-cost-est"> est.</span></span>
+            </div>
+            ${
+              cost.savings > 0.5
+                ? `<div class="route-cost-save"><span class="cost-ic">${UI_ICONS.savings}</span>Save ~$${cost.savings.toFixed(2)} vs driving${cost.paysParking ? " (incl. parking)" : ""}${cost.freeTTC ? " · TTC leg free (One Fare)" : ""}</div>`
+                : cost.freeTTC
+                  ? `<div class="route-cost-save">TTC connection free (One Fare)</div>`
+                  : ""
             }
           </div>
 
@@ -802,24 +874,109 @@ function displayRoutes() {
 function drawRoute(route) {
   if (routeLayer) routeLayer.remove();
 
-  // Full journey path in red: leg to the station + transit leg to destination.
-  const coords = [];
-  if (route.toStation && route.toStation.geometry) {
-    coords.push(...route.toStation.geometry);
-  }
-  if (route.fromStation && route.fromStation.geometry) {
-    coords.push(...route.fromStation.geometry);
-  }
-  if (!coords.length) return;
+  const modeDef =
+    CONFIG.TRAVEL_MODES.find((m) => m.value === route.travelMode) ||
+    CONFIG.TRAVEL_MODES[0];
+  // Leg 1 = how you get TO the station (coloured by travel mode).
+  // Leg 2 = the GO bus/train leg (distinct amber, dashed) — so it's obvious
+  // where you get off one and board the other.
+  const accessColor = modeDef.color || "#8257e6";
+  const transitColor = "#e0b25a";
 
-  routeLayer = L.polyline(coords, {
-    color: "#ff3b52",
-    weight: 5,
-    opacity: 0.95,
-    lineJoin: "round",
-    lineCap: "round",
-  }).addTo(map);
-  map.fitBounds(routeLayer.getBounds(), { padding: [60, 60] });
+  const g1 = route.toStation && route.toStation.geometry;
+  const g2 = route.fromStation && route.fromStation.geometry;
+  const hasBusLeg = !!(g2 && g2.length);
+
+  const layers = [];
+  if (g1 && g1.length) {
+    layers.push(
+      L.polyline(g1, {
+        color: accessColor,
+        weight: 5,
+        opacity: 0.95,
+        lineJoin: "round",
+        lineCap: "round",
+      }).bindTooltip(`${modeDef.label} to ${route.station.name}`, {
+        sticky: true,
+      }),
+    );
+  }
+  if (hasBusLeg) {
+    layers.push(
+      L.polyline(g2, {
+        color: transitColor,
+        weight: 5,
+        opacity: 0.95,
+        dashArray: "2 10",
+        lineCap: "round",
+      }).bindTooltip("GO bus / train", { sticky: true }),
+    );
+  }
+
+  // Waypoint markers: Start → (Board GO) → Destination.
+  const startPt =
+    g1 && g1.length
+      ? g1[0]
+      : currentLocation
+        ? [currentLocation.lat, currentLocation.lng]
+        : null;
+  const stationPt = [route.station.lat, route.station.lng];
+  const endPt =
+    hasBusLeg && g2.length
+      ? g2[g2.length - 1]
+      : destinationLocation
+        ? [destinationLocation.lat, destinationLocation.lng]
+        : stationPt;
+
+  const dot = (pt, color, label) =>
+    L.circleMarker(pt, {
+      radius: 7,
+      color: "#0b0d14",
+      weight: 3,
+      fillColor: color,
+      fillOpacity: 1,
+    }).bindTooltip(label);
+
+  if (startPt) layers.push(dot(startPt, accessColor, "Start"));
+  if (hasBusLeg) {
+    // Station is a transfer point: get off the access leg, board GO here.
+    layers.push(dot(stationPt, transitColor, `Board GO · ${route.station.name}`));
+    layers.push(dot(endPt, "#f0637a", "Destination"));
+  } else {
+    // Station itself is the destination.
+    layers.push(dot(stationPt, "#f0637a", `Destination · ${route.station.name}`));
+  }
+
+  routeLayer = L.layerGroup(layers).addTo(map);
+
+  const allPts = [];
+  if (g1 && g1.length) allPts.push(...g1);
+  if (hasBusLeg) allPts.push(...g2);
+  if (allPts.length)
+    map.fitBounds(L.latLngBounds(allPts), { padding: [60, 60] });
+
+  updateRouteLegend(route, accessColor, transitColor, modeDef, hasBusLeg);
+}
+
+// Small on-map legend so the two leg colours are readable.
+function updateRouteLegend(route, accessColor, transitColor, modeDef, hasBusLeg) {
+  let el = document.getElementById("route-legend");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "route-legend";
+    el.className = "route-legend";
+    (document.querySelector(".map-container") || document.body).appendChild(el);
+  }
+  const rows = [
+    `<div class="rl-row"><span class="rl-swatch" style="background:${accessColor}"></span>${modeDef.label} to station</div>`,
+  ];
+  if (hasBusLeg) {
+    rows.push(
+      `<div class="rl-row"><span class="rl-swatch rl-dash" style="background:${transitColor}"></span>GO bus / train</div>`,
+    );
+  }
+  el.innerHTML = rows.join("");
+  el.style.display = "block";
 }
 
 function startRoute(index) {
@@ -828,6 +985,12 @@ function startRoute(index) {
 
   const route = routes[index];
   drawRoute(route);
+
+  // Take the user to their starting point on the map.
+  const startLatLng =
+    route.toStation?.geometry?.[0] ||
+    (currentLocation && [currentLocation.lat, currentLocation.lng]);
+  if (startLatLng) map.setView(startLatLng, 15);
 
   document.querySelectorAll(".route-start-button").forEach((btn, i) => {
     if (i === index) {
@@ -849,6 +1012,10 @@ function startRoute(index) {
     alertMessage = `Follow ${stepCount} steps to ${route.station.name}. Route highlighted on the map.`;
   }
   addAlert("info", "Navigation Active", alertMessage);
+
+  // Live follow-along navigation (foreground): streams GPS, follows you on the
+  // map, gives turn-by-turn to the stop, and alerts on arrival.
+  if (typeof Navigation !== "undefined") Navigation.start(route);
 }
 
 function selectRoute(index) {
@@ -866,6 +1033,7 @@ function selectRoute(index) {
   currentBusSchedule = route.schedule || getBusSchedule(route.station.name);
   selectedBusTime = null;
   displayBusSchedule();
+  recommendForArrival(route);
   calculateLeaveTime(route);
 
   if (route.isLive) {
@@ -909,6 +1077,39 @@ function displayBusSchedule() {
       }
     });
   });
+}
+
+// Lecture-time back-solve: given a desired arrival ("class at 10:00"), pick the
+// latest departure that still gets there with a small buffer, and select it.
+function recommendForArrival(route) {
+  const arrival = document.getElementById("arrival-time").value;
+  if (!arrival || !/^\d{1,2}:\d{2}$/.test(arrival)) return;
+  if (!currentBusSchedule || !currentBusSchedule.length) return;
+
+  const toMin = (t) => {
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + m;
+  };
+  const arrivalMin = toMin(arrival);
+  const BUFFER = 5; // arrive a few minutes early
+  const legMin = route.fromStation ? route.fromStation.duration : 0;
+
+  // Latest bus whose arrival at the destination is on time (with buffer).
+  let best = null;
+  for (const t of currentBusSchedule) {
+    if (toMin(t) + legMin + BUFFER <= arrivalMin) best = t;
+  }
+  if (!best) return; // nothing arrives in time — leave the default "next bus"
+
+  selectedBusTime = best;
+  document.querySelectorAll(".bus-time-option").forEach((o) => {
+    o.classList.toggle("selected", o.dataset.time === best);
+  });
+  addAlert(
+    "info",
+    `To arrive by ${arrival}`,
+    `Catch the ${best} departure — it gets you there with ~${BUFFER} min to spare.`,
+  );
 }
 
 function calculateTimeDiff(time) {
@@ -974,6 +1175,12 @@ async function sendAIMessage() {
 
   addAIMessage("user", message);
   input.value = "";
+
+  // Group "meet in the middle" requests are handled by the GroupTrip module
+  // (it opens the panel, fills locations, and runs the finder).
+  if (typeof GroupTrip !== "undefined" && GroupTrip.tryHandle(message)) {
+    return;
+  }
 
   const context = buildAIContext();
 
@@ -1041,6 +1248,16 @@ function buildAIContext() {
 // Apply the assistant's structured actions to the form, then optionally search.
 async function applyAgentActions(a) {
   if (!a) return;
+
+  // Phase 1: if the assistant identified a trip, hand off to the interactive
+  // in-chat picker (choose stops / address / departure time) instead of silently
+  // auto-filling and searching. Falls through to the old behaviour if the picker
+  // module isn't loaded.
+  if (typeof beginTripPicker === "function" && (a.origin || a.destination)) {
+    await beginTripPicker(a);
+    return;
+  }
+
   if (a.origin && a.origin.kind) await applyOrigin(a.origin);
   if (a.destination && a.destination.kind) await applyDestination(a.destination);
 
@@ -1163,13 +1380,21 @@ function addAIMessage(role, content) {
   const messageDiv = document.createElement("div");
   messageDiv.className = `ai-message ai-message-${role}`;
 
-  const formattedContent =
-    role === "assistant" ? formatAIResponse(content) : content;
+  const avatar = document.createElement("div");
+  avatar.className = "ai-avatar";
+  avatar.innerHTML = role === "user" ? ICONS.user : ICONS.ai; // trusted inline SVG constants
 
-  messageDiv.innerHTML = `
-    <div class="ai-avatar">${role === "user" ? ICONS.user : ICONS.ai}</div>
-    <div class="ai-content">${formattedContent}</div>`;
+  const contentEl = document.createElement("div");
+  contentEl.className = "ai-content";
+  if (role === "assistant") {
+    // formatAIResponse escapes its input, then emits only safe markup.
+    contentEl.innerHTML = formatAIResponse(content);
+  } else {
+    // User text is untrusted — never parse it as HTML.
+    contentEl.textContent = content;
+  }
 
+  messageDiv.append(avatar, contentEl);
   messagesContainer.appendChild(messageDiv);
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
@@ -1210,23 +1435,47 @@ async function getAIRouteInsights() {
 }
 
 /* ---------------- Map controls ---------------- */
+// Points of interest: GO stops (bus/train) + campuses, as themed SVG pins with
+// hover labels. Shown by default so the map reads as more detailed.
+function buildPoiLayer() {
+  const markers = [];
+
+  CONFIG.GO_TRANSIT_STATIONS.forEach((s) => {
+    markers.push(
+      L.marker([s.lat, s.lng], {
+        icon: L.divIcon({
+          className: "",
+          html: `<div class="poi poi-stop">${UI_ICONS.bus}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
+      }).bindTooltip(`${s.name} · GO ${s.type}`),
+    );
+  });
+
+  (CONFIG.CAMPUSES || []).forEach((c) => {
+    markers.push(
+      L.marker([c.lat, c.lng], {
+        icon: L.divIcon({
+          className: "",
+          html: `<div class="poi poi-school">${UI_ICONS.cap}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
+      }).bindTooltip(`${c.name}`),
+    );
+  });
+
+  return L.layerGroup(markers);
+}
+
 function toggleStations() {
-  if (stationsLayer) {
-    stationsLayer.remove();
-    stationsLayer = null;
+  if (poiLayer && map.hasLayer(poiLayer)) {
+    map.removeLayer(poiLayer);
     return;
   }
-  stationsLayer = L.layerGroup(
-    CONFIG.GO_TRANSIT_STATIONS.map((s) =>
-      L.circleMarker([s.lat, s.lng], {
-        radius: 5,
-        color: "#7c74ff",
-        weight: 1.5,
-        fillColor: "#4d7cff",
-        fillOpacity: 0.6,
-      }).bindTooltip(`${s.name} (${s.type})`),
-    ),
-  ).addTo(map);
+  if (!poiLayer) poiLayer = buildPoiLayer();
+  poiLayer.addTo(map);
 }
 
 function centerMap() {
@@ -1239,6 +1488,15 @@ function centerMap() {
 function addAlert(type, title, message) {
   const container = document.getElementById("alerts-list");
   document.getElementById("alerts-section").style.display = "block";
+
+  // De-dupe: don't stack an alert identical to one already shown. Keeps the
+  // "Leave by" message and the periodic service-alert refresh from piling up.
+  const dup = [...container.children].some(
+    (el) =>
+      el.querySelector(".alert-title")?.textContent === title &&
+      el.querySelector(".alert-message")?.textContent === message,
+  );
+  if (dup) return;
 
   const alert = document.createElement("div");
   alert.className = `alert alert-${type}`;
@@ -1254,6 +1512,78 @@ function addAlert(type, title, message) {
   while (container.children.length > 3) {
     container.removeChild(container.lastChild);
   }
+}
+
+/* ---------------- Cost lens (est. fares + PRESTO student discount) ------- */
+// Estimated GO single fare + savings vs driving. GO fares are distance-based
+// and set by Metrolinx; these are transparent ESTIMATES (see CONFIG.FARE_MODEL),
+// not official prices. Full-time post-secondary students save 40% with PRESTO,
+// and Ontario's One Fare makes a connecting TTC leg free.
+function estimateTripCost(route) {
+  const f = CONFIG.FARE_MODEL;
+  const km = goTransitService.parseDistance(route.toStation.distance) +
+    (route.fromStation ? goTransitService.parseDistance(route.fromStation.distance) : 0);
+
+  let fare = f.estBaseFare + Math.max(0, km - f.baseDistanceKm) * f.estPerKm;
+  if (studentFare) fare *= 1 - f.studentDiscount;
+
+  const dest = (destinationPlace?.formatted_address || "").toLowerCase();
+  const freeTTC = /toronto|union|tmu|ryerson|u of t|university of toronto/.test(dest);
+
+  // Only count parking in the driving comparison where you'd actually pay to
+  // park — a campus or downtown Toronto. Otherwise the driving alternative is
+  // fuel only, so "savings vs driving" isn't inflated for ordinary trips.
+  const paysParking =
+    freeTTC ||
+    (CONFIG.CAMPUSES || []).some((c) => {
+      const short = c.short.toLowerCase();
+      const firstWord = c.name.toLowerCase().split(" ")[0];
+      return dest.includes(short) || (firstWord.length > 3 && dest.includes(firstWord));
+    });
+
+  const driveCost = km * f.gasPerKm + (paysParking ? f.campusParkingPerDay : 0);
+  const savings = driveCost - fare; // can be <= 0; the UI only shows real savings
+
+  return { fare, savings, freeTTC, paysParking };
+}
+
+function renderStudentToggle() {
+  return `
+    <label class="student-toggle">
+      <input type="checkbox" ${studentFare ? "checked" : ""} onchange="toggleStudentFare(this.checked)" />
+      <span class="student-toggle-track"><span class="student-toggle-thumb"></span></span>
+      <span class="student-toggle-text"><span class="cost-ic">${UI_ICONS.cap}</span>Student fare <em>(40% off)</em></span>
+    </label>`;
+}
+
+function toggleStudentFare(on) {
+  studentFare = !!on;
+  localStorage.setItem("routeiq_student_fare", studentFare ? "1" : "0");
+  if (routes.length) displayRoutes();
+}
+
+/* ---------------- Campus quick-pick ---------------- */
+function renderCampusChips() {
+  const wrap = document.getElementById("campus-chips");
+  if (!wrap || typeof CONFIG.CAMPUSES === "undefined") return;
+  wrap.innerHTML = CONFIG.CAMPUSES.map(
+    (c, i) => `<button class="campus-chip" data-i="${i}" type="button">${c.short}</button>`,
+  ).join("");
+  wrap.querySelectorAll(".campus-chip").forEach((chip) =>
+    chip.addEventListener("click", () => setCampusDestination(CONFIG.CAMPUSES[parseInt(chip.dataset.i)])),
+  );
+}
+
+function setCampusDestination(campus) {
+  if (!campus) return;
+  setRadio("dest-type", "custom");
+  const inp = document.getElementById("destination-input");
+  if (inp) inp.value = campus.name;
+  destinationLocation = L.latLng(campus.lat, campus.lng);
+  destinationPlace = { formatted_address: campus.name, lat: campus.lat, lng: campus.lng };
+  setDestinationMarker(destinationLocation, campus.name);
+  map.setView(destinationLocation, 13);
+  addAlert("info", "Destination set", `Heading to ${campus.name}. Add your origin and hit Find Routes.`);
 }
 
 /* ---------------- Stats ---------------- */
