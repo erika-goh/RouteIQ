@@ -1461,12 +1461,60 @@ function buildAIContext() {
       busScheduleArray.length > 0
         ? busScheduleArray.join(", ")
         : "No schedule available",
+    studentFare: studentFare,
+    // Structured fares so the OFFLINE fallback can compose a tidy answer instead
+    // of echoing the full route lines (which read as a raw data dump in chat).
+    fares: routes.map((r) => {
+      const c = estimateTripCost(r);
+      return {
+        mode: r.travelMode,
+        station: r.station.name,
+        fare: c.fare,
+        savings: c.savings,
+        freeTTC: c.freeTTC,
+        durationMin: r.totalDuration,
+        busTime: r.busTime,
+      };
+    }),
+    // How the fares above were derived, so the assistant can explain them and
+    // flag them as estimates rather than quoting them as official prices.
+    fareInfo: routes.length
+      ? `Fares are ESTIMATES from RouteIQ's model (~$${CONFIG.FARE_MODEL.estBaseFare.toFixed(2)} base covering ${CONFIG.FARE_MODEL.baseDistanceKm} km, then ~$${CONFIG.FARE_MODEL.estPerKm.toFixed(2)}/km), not official Metrolinx prices. Student fare toggle is currently ${studentFare ? "ON (40% PRESTO post-secondary discount applied)" : "OFF (tap 'Student fare' on a route card for the 40% PRESTO discount)"}. Ontario's One Fare makes a connecting TTC leg free.`
+      : "No fares yet — no routes have been calculated.",
+    // GO does not publish seat/occupancy data through the feed this app uses, so
+    // the assistant must say so instead of inventing a number.
+    seatAvailability:
+      "Not available: GO Transit does not publish live seat counts or vehicle occupancy through the Metrolinx Open Data feed this app uses. GO buses and trains are first-come, first-served with no seat reservations.",
   };
+}
+
+// Travel mode + desired arrival time from the assistant's action. Assigning
+// .value directly (no "change" event) is deliberate: dispatching change would
+// re-enter findRoutes via handleTravelModeChange and count a false reroute.
+function applyTripPreferences(a) {
+  if (!a) return;
+  if (a.travelMode) {
+    const t = document.getElementById("travel-mode");
+    if (t && [...t.options].some((o) => o.value === a.travelMode)) {
+      t.value = a.travelMode;
+    }
+  }
+  if (a.arrivalTime && /^\d{1,2}:\d{2}$/.test(a.arrivalTime)) {
+    const [h, m] = a.arrivalTime.split(":");
+    document.getElementById("arrival-time").value = `${h.padStart(2, "0")}:${m}`;
+  }
 }
 
 // Apply the assistant's structured actions to the form, then optionally search.
 async function applyAgentActions(a) {
   if (!a) return;
+
+  // Mode + arrival time are applied FIRST, because the trip-picker hand-off
+  // below returns early. Doing it after would silently drop the class-time
+  // back-solve ("for my 2pm lecture") on the main conversational path, leaving
+  // #arrival-time empty so recommendForArrival and the "arriving late" check
+  // never fire.
+  applyTripPreferences(a);
 
   // Phase 1: if the assistant identified a trip, hand off to the interactive
   // in-chat picker (choose stops / address / departure time) instead of silently
@@ -1479,17 +1527,6 @@ async function applyAgentActions(a) {
 
   if (a.origin && a.origin.kind) await applyOrigin(a.origin);
   if (a.destination && a.destination.kind) await applyDestination(a.destination);
-
-  if (a.travelMode) {
-    const t = document.getElementById("travel-mode");
-    if (t && [...t.options].some((o) => o.value === a.travelMode)) {
-      t.value = a.travelMode;
-    }
-  }
-  if (a.arrivalTime && /^\d{1,2}:\d{2}$/.test(a.arrivalTime)) {
-    const [h, m] = a.arrivalTime.split(":");
-    document.getElementById("arrival-time").value = `${h.padStart(2, "0")}:${m}`;
-  }
 
   // Run the search only when we actually have both endpoints resolved.
   if (a.search && currentLocation && destinationLocation) {
