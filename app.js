@@ -1145,8 +1145,10 @@ function selectRoute(index) {
   currentBusSchedule = route.schedule || getBusSchedule(route.station.name);
   selectedBusTime = null;
   displayBusSchedule();
-  recommendForArrival(route);
-  calculateLeaveTime(route);
+  // When an arrival time is set, recommendForArrival owns the instruction (it
+  // names the stop, bus and arrival). Only fall back to the generic "Leave by"
+  // when there's no arrival target — otherwise both fire with different buffers.
+  if (!recommendForArrival(route)) calculateLeaveTime(route);
 
   // Show ONLY the disruptions that affect this route's station (real Metrolinx
   // data, filtered) — replaces the old global alert dump.
@@ -1195,37 +1197,133 @@ function displayBusSchedule() {
   });
 }
 
-// Lecture-time back-solve: given a desired arrival ("class at 10:00"), pick the
-// latest departure that still gets there with a small buffer, and select it.
+const ARRIVAL_BUFFER = 5; // be at the destination this many minutes early
+const WALKUP_BUFFER = 10; // slack to reach the stop and board
+
+const hhmmToMin = (t) => {
+  const [h, m] = String(t).split(":").map(Number);
+  return h * 60 + m;
+};
+const minToHhmm = (min) => {
+  const m = ((Math.round(min) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+};
+
+// A leave-by time is only meaningful if it hasn't already passed. Wrapping a
+// negative result into a same-day clock time (e.g. a 50-hour access leg from
+// Kingston yielding "leave by 16:06") produces a plausible-looking but wrong
+// instruction, so callers must check this before printing a time.
+function nowMinutes() {
+  const d = new Date();
+  return d.getHours() * 60 + d.getMinutes();
+}
+function leaveByIsReachable(leaveByMin) {
+  return leaveByMin >= nowMinutes();
+}
+// Phrase an unreachable leave-by without printing a wrapped clock time: once the
+// value falls outside today, "16:06" is meaningless (it came from a modulo).
+function unreachableLeaveByPhrase(leaveByMin) {
+  return leaveByMin < 0
+    ? "you'd have needed to set off yesterday"
+    : `you'd have needed to leave by ${minToHhmm(leaveByMin)}`;
+}
+// "3 h 20 min" / "50 h" — long access legs read as nonsense in raw minutes.
+function humanMinutes(min) {
+  if (!Number.isFinite(min)) return "?";
+  if (min < 60) return `${Math.round(min)} min`;
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+// Lecture-time back-solve: given a desired arrival ("class at 08:00"), pick the
+// LATEST departure that still gets there with ARRIVAL_BUFFER to spare, then state
+// the whole plan in one instruction — when to leave, how to reach which stop,
+// which bus to catch, and the estimated arrival. Returns true when it produced a
+// plan, so the caller can skip the generic "Leave by" alert (two alerts with
+// different buffers used to stack and contradict each other).
 function recommendForArrival(route) {
   const arrival = document.getElementById("arrival-time").value;
-  if (!arrival || !/^\d{1,2}:\d{2}$/.test(arrival)) return;
-  if (!currentBusSchedule || !currentBusSchedule.length) return;
+  if (!arrival || !/^\d{1,2}:\d{2}$/.test(arrival)) return false;
+  if (!currentBusSchedule || !currentBusSchedule.length) return false;
 
-  const toMin = (t) => {
-    const [h, m] = t.split(":").map(Number);
-    return h * 60 + m;
-  };
-  const arrivalMin = toMin(arrival);
-  const BUFFER = 5; // arrive a few minutes early
-  const legMin = route.fromStation ? route.fromStation.duration : 0;
+  const arrivalMin = hhmmToMin(arrival);
+  const rideMin = route.fromStation ? route.fromStation.duration : 0;
+  const accessMin = route.toStation ? route.toStation.duration : 0;
+  const modeDef = CONFIG.TRAVEL_MODES.find((m) => m.value === route.travelMode);
+  const accessVerb =
+    route.travelMode === "TRANSIT"
+      ? "drive"
+      : (modeDef ? modeDef.label : route.travelMode).toLowerCase();
+  const boardingStop = route.station.name;
+  // Geocoded labels are long ("McMaster University, Main Street West, Hamilton,
+  // Ontario"); the first segment is the recognisable place name.
+  const destName =
+    (destinationPlace?.formatted_address || "").split(",")[0].trim() ||
+    "your destination";
 
-  // Latest bus whose arrival at the destination is on time (with buffer).
+  // Latest bus that still lands on time (with buffer).
   let best = null;
   for (const t of currentBusSchedule) {
-    if (toMin(t) + legMin + BUFFER <= arrivalMin) best = t;
+    if (hhmmToMin(t) + rideMin + ARRIVAL_BUFFER <= arrivalMin) best = t;
   }
-  if (!best) return; // nothing arrives in time — leave the default "next bus"
+
+  clearPlanAlerts();
+
+  if (!best) {
+    // Nothing arrives in time — say so plainly instead of silently falling back
+    // to "next bus", which would look like a valid plan for the class.
+    const earliest = currentBusSchedule[0];
+    addAlert(
+      "warning",
+      `Can't make ${arrival}`,
+      `No remaining departure from ${boardingStop} gets you to ${destName} by ${arrival}` +
+        (earliest
+          ? ` — the next one (${earliest}) arrives about ${minToHhmm(hhmmToMin(earliest) + rideMin)}. Try driving the whole way, a closer stop, or an earlier departure.`
+          : "."),
+      "plan",
+    );
+    return true;
+  }
 
   selectedBusTime = best;
   document.querySelectorAll(".bus-time-option").forEach((o) => {
     o.classList.toggle("selected", o.dataset.time === best);
   });
+
+  const leaveByMin = hhmmToMin(best) - accessMin - WALKUP_BUFFER;
+  const estArrivalMin = hhmmToMin(best) + rideMin;
+  const spare = arrivalMin - estArrivalMin;
+  const access = `${accessVerb.charAt(0).toUpperCase() + accessVerb.slice(1)} ${humanMinutes(accessMin)} to ${boardingStop}`;
+
+  if (!leaveByIsReachable(leaveByMin)) {
+    // You'd have had to leave already — don't print a wrapped clock time.
+    addAlert(
+      "warning",
+      `Too late for the ${best} bus`,
+      `Getting to ${boardingStop} takes ${humanMinutes(accessMin)}, longer than the time left before the ${best} departs, so ${unreachableLeaveByPhrase(leaveByMin)}. ` +
+        `Pick a closer stop, drive the whole way, or plan this for tomorrow.`,
+      "plan",
+    );
+    return true;
+  }
+
   addAlert(
     "info",
-    `To arrive by ${arrival}`,
-    `Catch the ${best} departure — it gets you there with ~${BUFFER} min to spare.`,
+    `Leave by ${minToHhmm(leaveByMin)} for your ${arrival}`,
+    `${access}, catch the ${best} bus, and you reach ${destName} around ${minToHhmm(estArrivalMin)} — ` +
+      `${spare} min before ${arrival}.`,
+    "plan",
   );
+  return true;
+}
+
+// Drop any previous trip-plan instruction so a new selection replaces it rather
+// than stacking a second, contradictory "leave by" line.
+function clearPlanAlerts() {
+  document
+    .querySelectorAll('#alerts-list [data-alert-kind="plan"]')
+    .forEach((el) => el.remove());
 }
 
 function calculateTimeDiff(time) {
@@ -1240,21 +1338,26 @@ function calculateLeaveTime(route) {
   if (!selectedBusTime) selectedBusTime = currentBusSchedule[0];
   if (!selectedBusTime) return;
 
-  const [hours, minutes] = selectedBusTime.split(":").map(Number);
-  const busTime = new Date();
-  busTime.setHours(hours, minutes, 0);
+  const accessMin = route.toStation.duration;
+  const leaveByMin = hhmmToMin(selectedBusTime) - accessMin - WALKUP_BUFFER;
 
-  const leaveTime = new Date(
-    busTime.getTime() - route.toStation.duration * 60000 - 10 * 60000,
-  );
-
+  // Tagged "plan" and cleared first, so picking a different bus REPLACES this
+  // line instead of adding another one with a different time.
+  clearPlanAlerts();
+  if (!leaveByIsReachable(leaveByMin)) {
+    addAlert(
+      "warning",
+      `Too late for the ${selectedBusTime} bus`,
+      `Getting to ${route.station.name} takes ${humanMinutes(accessMin)}, so ${unreachableLeaveByPhrase(leaveByMin)}. Try a closer stop, driving, or a later departure.`,
+      "plan",
+    );
+    return;
+  }
   addAlert(
     "info",
-    "Leave by",
-    `You should leave by ${leaveTime.toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    })} to catch the ${selectedBusTime} bus.`,
+    `Leave by ${minToHhmm(leaveByMin)}`,
+    `${humanMinutes(accessMin)} to ${route.station.name}, then catch the ${selectedBusTime} bus.`,
+    "plan",
   );
 }
 
