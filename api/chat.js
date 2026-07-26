@@ -1,23 +1,23 @@
-// Vercel Serverless Function — AI proxy via Vercel AI Gateway.
+// Vercel Serverless Function — AI proxy calling Google's Gemini API directly.
 //
-// Routes through the AI Gateway (unified API, provider failover, cost/usage
-// observability, zero-retention) instead of calling a provider SDK directly.
-// Auth is automatic on Vercel via the OIDC token (VERCEL_OIDC_TOKEN); for local
-// dev run `vercel env pull`. A static AI_GATEWAY_API_KEY also works.
+// Uses the Generative Language REST endpoint with a GEMINI_API_KEY (free tier,
+// no credit card) instead of the Vercel AI Gateway, which refuses requests
+// until a card is on file. Get a key at https://aistudio.google.com/apikey and
+// set GEMINI_API_KEY locally (.env.local) and in the Vercel project env.
 //
 // The browser contract is unchanged: POST { prompt: string, json?: boolean }
 // -> { reply: string }. So gemini.js needs no changes.
 //
-// Abuse protection: this endpoint spends money per call, so it is a public cost
-// target. Origin allowlist + prompt-length cap + best-effort per-instance rate
-// limit stop casual/browser abuse. For durable distributed limits, also set
-// per-user limits in the AI Gateway dashboard or enable Vercel WAF Rate Limiting.
+// Abuse protection: this endpoint spends your Gemini quota per call, so it is a
+// public target. Origin allowlist + prompt-length cap + best-effort per-instance
+// rate limit stop casual/browser abuse. For durable distributed limits, enable
+// Vercel WAF Rate Limiting.
 
-// Primary model + gateway failover list. Newest cheap tier as of 2026-07; the
-// gateway resolves these to live models, so no more "retired model" breakage.
-// Override the primary with GEMINI_MODEL (e.g. google/gemini-3.6-flash).
-const PRIMARY_MODEL = process.env.GEMINI_MODEL || "google/gemini-3.5-flash-lite";
-const FALLBACK_MODELS = ["google/gemini-3.6-flash"];
+// Primary + fallback Gemini models (Google Generative Language API names).
+// gemini-flash-latest auto-tracks the current GA flash model. Override with
+// GEMINI_MODEL. gemini-3.5-flash is the pinned fallback if the primary 404s.
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
+const FALLBACK_MODELS = ["gemini-3.5-flash"];
 
 const MAX_PROMPT_CHARS = 8000;
 
@@ -78,9 +78,9 @@ module.exports = async (req, res) => {
     return res.status(429).json({ error: "Too many requests" });
   }
 
-  // No gateway auth available (e.g. local dev without `vercel env pull`) — tell
-  // the client to use its offline fallback.
-  if (!process.env.AI_GATEWAY_API_KEY && !process.env.VERCEL_OIDC_TOKEN) {
+  // No key configured — tell the client to use its offline fallback.
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
     return res.status(503).json({ error: "AI not configured" });
   }
 
@@ -104,46 +104,85 @@ module.exports = async (req, res) => {
 
   const wantJson = body && body.json === true;
 
-  try {
-    // ESM-only package imported dynamically so this file stays CommonJS.
-    const { generateText, APICallError } = await import("ai");
+  // One call to Google's Generative Language REST API for a given model.
+  // Returns { reply } on success or { status } so the caller can try a fallback.
+  async function callGemini(model) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      model,
+    )}:generateContent`;
 
-    const result = await generateText({
-      model: PRIMARY_MODEL, // plain "provider/model" string routes via the gateway
-      // Agent calls need strict JSON; nudge the model and keep it terse.
-      system: wantJson
-        ? "Respond with ONLY a single valid JSON object. No markdown, no code fences, no commentary."
-        : undefined,
-      prompt,
-      temperature: wantJson ? 0.2 : 0.7,
-      maxOutputTokens: 1024,
-      providerOptions: {
-        gateway: {
-          models: FALLBACK_MODELS, // failover if the primary is unavailable
-          tags: ["app:routeiq", wantJson ? "mode:agent" : "mode:chat"],
-        },
+    const requestBody = {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: wantJson ? 0.2 : 0.7,
+        maxOutputTokens: 1024,
+        // Agent calls need strict JSON — ask the model for JSON directly.
+        ...(wantJson ? { responseMimeType: "application/json" } : {}),
       },
+      ...(wantJson
+        ? {
+            systemInstruction: {
+              parts: [
+                {
+                  text: "Respond with ONLY a single valid JSON object. No markdown, no code fences, no commentary.",
+                },
+              ],
+            },
+          }
+        : {}),
+    };
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify(requestBody),
     });
 
-    const reply = (result.text || "").trim();
-    if (!reply) {
-      return res.status(502).json({ error: "Empty AI response" });
-    }
-    return res.status(200).json({ reply });
-  } catch (err) {
-    // Map gateway/provider errors to sensible statuses; the client falls back.
-    try {
-      const { APICallError } = await import("ai");
-      if (APICallError.isInstance(err)) {
-        const code = err.statusCode;
-        if (code === 402 || code === 429 || code === 503) {
-          return res.status(code).json({ error: "AI temporarily unavailable" });
-        }
+    if (!resp.ok) {
+      let detail = "";
+      try {
+        detail = (await resp.json())?.error?.message || "";
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
+      return { status: resp.status, detail };
     }
-    console.error("AI Gateway request failed:", err && err.message ? err.message : err);
+
+    const data = await resp.json();
+    const reply = (data.candidates?.[0]?.content?.parts || [])
+      .map((p) => p.text || "")
+      .join("")
+      .trim();
+    // A safety/recitation block returns candidates without text.
+    if (!reply) {
+      const blocked = data.promptFeedback?.blockReason;
+      return { status: blocked ? 400 : 502, detail: blocked || "empty" };
+    }
+    return { reply };
+  }
+
+  try {
+    let result = await callGemini(PRIMARY_MODEL);
+    // Retry once on a fallback model if the primary is missing/unavailable.
+    if (!result.reply && (result.status === 404 || result.status === 503)) {
+      for (const fb of FALLBACK_MODELS) {
+        result = await callGemini(fb);
+        if (result.reply) break;
+      }
+    }
+
+    if (result.reply) {
+      return res.status(200).json({ reply: result.reply });
+    }
+
+    const code = result.status || 502;
+    if (code === 429 || code === 503) {
+      return res.status(code).json({ error: "AI temporarily unavailable" });
+    }
+    console.error("Gemini request failed:", code, result.detail || "");
+    return res.status(502).json({ error: "Upstream AI error" });
+  } catch (err) {
+    console.error("Gemini request threw:", err && err.message ? err.message : err);
     return res.status(502).json({ error: "Upstream AI error" });
   }
 };
