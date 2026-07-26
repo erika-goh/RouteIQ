@@ -354,12 +354,10 @@
             <h2 class="section-title">Bus Schedule</h2>
             <div id="bus-schedule-container"></div>
           </div>
-
-          <!-- Alerts -->
-          <div class="section" id="alerts-section" style="display: none">
-            <h2 class="section-title">Alerts</h2>
-            <div id="alerts-list"></div>
-          </div>
+          <!-- NOTE: the Alerts section lives at the TOP of the sidebar (see
+               #alerts-section above). A second copy used to sit here, duplicating
+               the alerts-section / alerts-list ids — getElementById only ever
+               returned the first, so this one was dead markup. -->
         </div>
       </aside>
 
