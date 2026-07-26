@@ -454,13 +454,27 @@ const GroupTrip = (() => {
   }
 
   /* ---------------- panel helpers ---------------- */
-  function openPanel() {
+  // Open/closed state lives on aria-expanded, not on the inline display value.
+  // Reading `body.style.display !== "none"` treated an empty inline style as
+  // "open", so the first click could close an already-closed panel — the panel
+  // appeared to open and instantly vanish.
+  function isPanelOpen() {
+    const toggle = el("group-toggle");
+    return !!toggle && toggle.getAttribute("aria-expanded") === "true";
+  }
+
+  function setPanelOpen(open) {
     const body = el("group-body");
     const toggle = el("group-toggle");
-    if (body && body.style.display === "none") {
-      body.style.display = "block";
-      toggle && toggle.classList.add("open");
-    }
+    if (!body || !toggle) return;
+    body.style.display = open ? "block" : "none";
+    toggle.classList.toggle("open", open);
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function openPanel() {
+    if (!isPanelOpen()) setPanelOpen(true);
+    const body = el("group-body");
     body && body.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
@@ -560,10 +574,24 @@ const GroupTrip = (() => {
     const body = el("group-body");
     if (!toggle) return;
 
-    toggle.addEventListener("click", () => {
-      const open = body.style.display !== "none";
-      body.style.display = open ? "none" : "block";
-      toggle.classList.toggle("open", !open);
+    // Idempotent: if init() ever runs twice, a second set of listeners would
+    // toggle the panel twice per click (open then close), so it would look like
+    // pressing the dropdown did nothing.
+    if (toggle.dataset.riqBound === "1") return;
+    toggle.dataset.riqBound = "1";
+
+    // Seed the state flag from the markup's initial collapsed state.
+    setPanelOpen(body ? body.style.display !== "none" : false);
+
+    let lastToggleAt = 0;
+    toggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      // Swallow a repeat within 300ms: a double-click, or a synthetic click
+      // arriving alongside the native one, would otherwise cancel itself out.
+      const now = Date.now();
+      if (now - lastToggleAt < 300) return;
+      lastToggleAt = now;
+      setPanelOpen(!isPanelOpen());
     });
 
     el("group-add")?.addEventListener("click", addFriend);
