@@ -1432,10 +1432,19 @@ function buildAIContext() {
   let routeDetails = "No routes found yet";
   if (routes.length > 0) {
     routeDetails = routes
-      .map(
-        (r, i) =>
-          `${i + 1}. To ${r.station.name} - ${r.travelMode} (${r.toStation.distance}) • Bus at ${r.busTime} • Duration: ${r.totalDuration} min • Traffic: ${r.traffic} • CO2: ${r.co2.toFixed(1)}kg`,
-      )
+      .map((r, i) => {
+        // Include the SAME estimated fare the route card shows, so the assistant
+        // answers cost questions from the app's own numbers instead of refusing
+        // (or worse, guessing). estimateTripCost already honours the student
+        // toggle and counts both legs.
+        const c = estimateTripCost(r);
+        const extras = [
+          `Est. fare: $${c.fare.toFixed(2)}${studentFare ? " (student, 40% off)" : ""}`,
+          c.savings > 0.5 ? `saves ~$${c.savings.toFixed(2)} vs driving` : null,
+          c.freeTTC ? "connecting TTC leg free (One Fare)" : null,
+        ].filter(Boolean);
+        return `${i + 1}. To ${r.station.name} - ${r.travelMode} (${r.toStation.distance}) • Bus at ${r.busTime} • Duration: ${r.totalDuration} min • Traffic: ${r.traffic} • CO2: ${r.co2.toFixed(1)}kg • ${extras.join(" • ")}`;
+      })
       .join("\n");
   }
 

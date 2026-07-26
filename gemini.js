@@ -91,6 +91,9 @@ class GeminiAssistant {
     if (context.trafficData) dataLines.push(`Traffic: ${context.trafficData}`);
     if (context.busSchedule && context.busSchedule !== "No schedule available")
       dataLines.push(`Next departures: ${context.busSchedule}`);
+    if (context.fareInfo) dataLines.push(`Fares: ${context.fareInfo}`);
+    if (context.seatAvailability)
+      dataLines.push(`Seat availability: ${context.seatAvailability}`);
     const dataBlock = dataLines.length ? dataLines.join("\n") : "none yet";
 
     const prompt = `You are RouteIQ's trip-planning agent for GO Transit in the Greater Toronto Area, helping university/college students.
@@ -117,9 +120,14 @@ Rules:
 - CLASS-TIME BACK-SOLVE: if the user gives a class/arrival time ("for my 10am lecture", "need to be at Mac by 2pm", "get me there by 9:30"), set "arrivalTime" to that time. "arrivalTime" must be "HH:MM" 24-hour, or null. Interpret bare "10am"=>"10:00", "2pm"=>"14:00".
 - Set "search" TRUE only when BOTH origin and destination are known; then "needMore" is false.
 - If something required is missing, set "search" false, "needMore" true, and make "reply" ask ONLY for the missing piece.
-- CRITICAL: NEVER invent or state route options, bus numbers, departure times, durations, distances, fares, or CO2 — the app calculates and displays those. When you set a trip, reply like "Planning your trip from A to B — showing your options now."
+- CRITICAL: NEVER invent route options, bus numbers, departure times, durations, distances, fares, or CO2. You may only state such numbers by quoting them from the data block below, which the app calculated. When you set a NEW trip, reply like "Planning your trip from A to B — showing your options now."
+- FARES: when asked about cost/fare/price, quote the "Est. fare" values from the data below and call them estimates. Mention the 40% PRESTO student discount if the toggle is off, and One Fare (free connecting TTC leg) when it applies. If there are no routes yet, say you'll have a fare estimate once you show the options.
+- FORMATTING a multi-option answer (fares, durations, comparisons): do NOT run the options together in one paragraph. Use a short markdown list, cheapest/best first, one option per line, like:
+  - **Transit** via Oakville — **$8.66** · 33 min
+  Then one closing line with the recommendation. Never restate Traffic/CO2/Distance unless asked.
+- SEATS: GO has no live seat/occupancy data and no seat reservations. If asked about seats, crowding, or "how full", say so plainly and offer what actually helps (travel off-peak, board at the terminal, earlier departure). NEVER state a seat count or a crowding percentage.
 - Tone: friendly, clear, and concise, like a helpful classmate. At most one emoji.
-- Keep "reply" to ONE short sentence.
+- Keep "reply" to ONE short sentence — EXCEPT when listing multiple options (fares/durations/comparisons), where the short markdown list above is expected.
 - If the user is only asking a question about the current results, set origin/destination null and search false, and answer briefly using ONLY this data:
 ${dataBlock}
 
@@ -248,6 +256,30 @@ User message: "${userMessage}"`;
         return `${hit.name} is a GO ${hit.type} stop. Set it as your destination and I'll map the exact location and routes there.`;
       }
       return "I can't look up arbitrary addresses offline. Type the place into the destination box — it'll geocode and pin it on the map.";
+    }
+
+    // Seats / crowding. Checked BEFORE the bus/transit branch so "is the bus
+    // full?" gets the honest answer rather than a generic schedule reply. GO
+    // publishes no occupancy data, so never imply a number.
+    if (
+      /\bseat(s|ing)?\b|\bfull\b|\bcrowded\b|\bcrowding\b|\bbusy\b|\bstanding room\b|\bhow packed\b/.test(
+        message,
+      )
+    ) {
+      return "GO doesn't publish live seat counts or reservations — buses and trains are first-come, first-served, so I can't tell you how full one is. In practice: off-peak departures are the quietest, and boarding at the terminal (rather than a mid-route stop) gives you the best shot at a seat.";
+    }
+
+    // Fare / cost. Uses the app's own estimate when routes exist.
+    if (
+      /\bfare\b|\bcost\b|\bprice\b|\bhow much\b|\bcheap(est|er)?\b|\bexpensive\b|\bpresto\b|\bticket\b|\$/.test(
+        message,
+      )
+    ) {
+      const fares = Array.isArray(context.fares) ? context.fares : [];
+      if (fares.length) {
+        return formatFareAnswer(fares, context);
+      }
+      return "GO fares are distance-based. Once I show your route options, each card carries an estimated fare — and if you're a full-time post-secondary student, the Student fare toggle applies the 40% PRESTO discount. Ontario's One Fare also makes a connecting TTC leg free.";
     }
 
     // Specific, data-driven fallback responses
@@ -386,6 +418,12 @@ Guidelines:
       ) {
         relevantContext.push(`⏱️ Bus Schedule: ${context.busSchedule}`);
       }
+      if (context.fareInfo) {
+        relevantContext.push(`\n💲 FARES: ${context.fareInfo}`);
+      }
+      if (context.seatAvailability) {
+        relevantContext.push(`\n🪑 SEATS: ${context.seatAvailability}`);
+      }
 
       if (relevantContext.length > 0) {
         prompt += `DATA PROVIDED:\n`;
@@ -397,7 +435,7 @@ Guidelines:
     }
 
     prompt += `User's question: "${userMessage}"\n\n`;
-    prompt += `IMPORTANT: Answer based on the SPECIFIC DATA above. Use actual numbers and compare routes directly. Don't give generic advice - be specific and analytical.`;
+    prompt += `IMPORTANT: Answer based on the SPECIFIC DATA above. Use actual numbers and compare routes directly. Don't give generic advice - be specific and analytical. Quote fares from the FARES data as estimates; never invent a fare. Never state a seat count or crowding level — GO publishes none. When comparing several options, use a short markdown list (one option per line, best first) rather than one long paragraph.`;
 
     return prompt;
   }
@@ -449,6 +487,74 @@ Guidelines:
   }
 }
 
+// Compose a scannable fare answer from the structured fare data in the AI
+// context. Emits only the markdown formatAIResponse understands (**bold**,
+// "- " lists, newlines), so it renders as a real list rather than one long line.
+const MODE_LABEL = {
+  WALKING: "Walking",
+  BICYCLING: "Cycling",
+  DRIVING: "Driving",
+  TRANSIT: "Transit",
+};
+
+function fmtDuration(min) {
+  if (!Number.isFinite(min)) return null;
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+// Trim "Hamilton GO Centre" -> "Hamilton", "Oakville GO Bus Terminal" -> "Oakville".
+function shortStation(name) {
+  return String(name || "")
+    .replace(/\s+(GO|Bus|Train|Terminal|Centre|Center|Station)\b.*$/i, "")
+    .trim() || String(name || "");
+}
+
+function formatFareAnswer(fares, context = {}) {
+  const sorted = [...fares].sort((a, b) => a.fare - b.fare);
+  const cheapest = sorted[0];
+  const fastest = [...fares].sort((a, b) => a.durationMin - b.durationMin)[0];
+
+  const rows = sorted.map((f) => {
+    const label = MODE_LABEL[f.mode] || f.mode;
+    const dur = fmtDuration(f.durationMin);
+    const isCheapest = f === cheapest;
+    const price = isCheapest ? `**$${f.fare.toFixed(2)}**` : `$${f.fare.toFixed(2)}`;
+    const bits = [price, dur, f.busTime ? `bus ${f.busTime}` : null].filter(Boolean);
+    return `- **${label}** via ${shortStation(f.station)} — ${bits.join(" · ")}`;
+  });
+
+  // No blank line after the rows: formatAIResponse wraps them in a <ul>, which
+  // already carries its own bottom margin (a "" here renders as a double <br>).
+  const lines = [`**Estimated fares** — cheapest first:`, ...rows];
+
+  const cheapLabel = MODE_LABEL[cheapest.mode] || cheapest.mode;
+  if (fastest && fastest !== cheapest) {
+    const fastLabel = MODE_LABEL[fastest.mode] || fastest.mode;
+    lines.push(
+      `Cheapest is **${cheapLabel}** at $${cheapest.fare.toFixed(2)}; **${fastLabel}** is quickest at ${fmtDuration(fastest.durationMin)} for $${fastest.fare.toFixed(2)}.`,
+    );
+  } else {
+    lines.push(
+      `**${cheapLabel}** is both cheapest and quickest — $${cheapest.fare.toFixed(2)} in ${fmtDuration(cheapest.durationMin)}.`,
+    );
+  }
+
+  if (sorted.some((f) => f.freeTTC)) {
+    lines.push("Your connecting TTC leg is free under Ontario's One Fare.");
+  }
+  lines.push(
+    context.studentFare
+      ? "Prices already include the 40% PRESTO student discount."
+      : "Save 40% — turn on **Student fare** on any route card (PRESTO, full-time post-secondary).",
+  );
+  lines.push("These are estimates from RouteIQ's model, not official Metrolinx fares.");
+
+  return lines.join("\n");
+}
+
 // Escape HTML so untrusted text (model output can echo the user's message)
 // can't inject markup when inserted via innerHTML.
 function escapeHtml(text) {
@@ -482,5 +588,12 @@ function formatAIResponse(text) {
 
 // Export for use in other files
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { GeminiAssistant, formatAIResponse, escapeHtml };
+  module.exports = {
+    GeminiAssistant,
+    formatAIResponse,
+    escapeHtml,
+    formatFareAnswer,
+    fmtDuration,
+    shortStation,
+  };
 }
