@@ -32,6 +32,10 @@ const PROFILE_MAP = {
   TRANSIT: "car",
 };
 
+// Longest believable walk/bike leg to a station. Beyond this the option is
+// dropped rather than shown (OSRM will happily return a 50-hour walk).
+const MAX_ACTIVE_ACCESS_MIN = 90;
+
 // Inline SVG icons (modern, monochrome via currentColor)
 const ICONS = {
   ai: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.7 5.6L19 9l-5.3 1.4L12 16l-1.7-5.6L5 9l5.3-1.4z"/><circle cx="18.5" cy="17.5" r="1.6"/></svg>',
@@ -638,8 +642,28 @@ async function findRoutes() {
         if (!routeFromStation) continue;
       }
 
-      const distance = goTransitService.parseDistance(routeToStation.distance);
-      const co2 = goTransitService.calculateCO2Savings(distance, effMode);
+      // Reject access legs that are absurd for the mode — a 15 km "walk to the
+      // station" (or a 50 h one from outside the GO area) is not a real option
+      // and it poisons the ranking and the leave-by advice.
+      if (
+        (effMode === "WALKING" || effMode === "BICYCLING") &&
+        routeToStation.duration > MAX_ACTIVE_ACCESS_MIN
+      ) {
+        continue;
+      }
+
+      const accessKm = goTransitService.parseDistance(routeToStation.distance);
+      const transitKm = routeFromStation
+        ? goTransitService.parseDistance(routeFromStation.distance)
+        : 0;
+      // Whole-journey figure: scoring only the access leg reported 0 kg saved
+      // for transit options that board at the origin's own station.
+      const co2 = goTransitService.calculateJourneyCO2Savings(
+        accessKm,
+        transitKm,
+        effMode,
+      );
+      const totalKm = accessKm + transitKm;
 
       // Driving is most affected by peak-hour congestion; active modes least.
       let traffic = "low";
@@ -666,6 +690,7 @@ async function findRoutes() {
         isLive: !!(live && live.length),
         travelMode: effMode,
         totalDuration: totalDuration,
+        totalKm: totalKm,
         summary: `${effMode} to ${leg.station.name} (${routeToStation.distance}) • Bus at ${busTime}`,
         co2: co2,
         traffic: traffic,
@@ -867,7 +892,13 @@ function displayRoutes() {
               <div class="route-detail-icon">📍</div>
               <div>
                 <div class="route-detail-label">Distance</div>
-                <div class="route-detail-value">${route.toStation.distance}</div>
+                <div class="route-detail-value">${
+                  // Whole journey, not just the leg to the station — a transit
+                  // option boarding at your own station showed "0.0 km".
+                  Number.isFinite(route.totalKm)
+                    ? `${route.totalKm.toFixed(1)} km`
+                    : route.toStation.distance
+                }</div>
               </div>
             </div>
             <div class="route-detail">
@@ -893,11 +924,15 @@ function displayRoutes() {
             Traffic: ${route.traffic ? route.traffic.charAt(0).toUpperCase() + route.traffic.slice(1) : "Low"}
           </div>
 
-          <div class="route-co2 ${isZeroCO2 ? "savings" : ""}">
+          <div class="route-co2 ${co2Value > 0.05 ? "savings" : ""}">
             ${
-              isZeroCO2
+              // co2 is now always "avoided vs driving door-to-door", so label it
+              // that way for every mode instead of only the zero-carbon ones
+              // (walking previously rendered a bare "3.0 kg CO₂", which read as
+              // emissions rather than savings).
+              co2Value > 0.05
                 ? `<span class="cost-ic">${UI_ICONS.leaf}</span>${co2Value.toFixed(1)} kg CO₂ saved vs driving`
-                : `${co2Value.toFixed(1)} kg CO₂`
+                : `No CO₂ saved vs driving`
             }
           </div>
 

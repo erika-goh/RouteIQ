@@ -184,12 +184,36 @@ class GOTransitService {
   /* ---------------- Local helpers (no network) ---------------- */
 
   // Average CO2 per km: Car = 0.19 kg, Transit = 0.05 kg
+  static CAR_KG_PER_KM = 0.19;
+  static TRANSIT_KG_PER_KM = 0.05;
+
+  // Single-leg figure, kept for callers that only have one distance.
   calculateCO2Savings(distance, mode) {
     const distanceKm = this.parseDistance(distance);
     if (mode === "BICYCLING" || mode === "WALKING") return distanceKm * 0.19;
     if (mode === "TRANSIT") return distanceKm * (0.19 - 0.05);
     if (mode === "DRIVING") return distanceKm * 0.19;
     return 0;
+  }
+
+  /**
+   * CO2 avoided across the WHOLE journey vs driving door-to-door.
+   *
+   * Scoring one leg only understated the trips that save most: a transit option
+   * boarding at your own station has a ~0 km access leg, so the entire GO ride
+   * scored 0 kg. Split it instead:
+   *  - access leg saves the full car rate only when it's active travel
+   *    (walk/bike); driving or Ubering to the station saves nothing.
+   *  - the GO leg always saves the car-minus-transit delta.
+   */
+  calculateJourneyCO2Savings(accessDistance, transitDistance, accessMode) {
+    const accessKm = this.parseDistance(accessDistance);
+    const transitKm = this.parseDistance(transitDistance);
+    const CAR = GOTransitService.CAR_KG_PER_KM;
+    const TRANSIT = GOTransitService.TRANSIT_KG_PER_KM;
+    const accessSaved =
+      accessMode === "WALKING" || accessMode === "BICYCLING" ? accessKm * CAR : 0;
+    return accessSaved + transitKm * (CAR - TRANSIT);
   }
 
   parseDistance(distanceStr) {
