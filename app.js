@@ -1528,7 +1528,14 @@ function buildAIContext() {
   let trafficData = "";
   if (routes.length > 0) {
     const t = routes.map((r) => r.traffic);
-    trafficData = `Heavy: ${t.filter((x) => x === "heavy").length} routes, Medium: ${t.filter((x) => x === "medium").length} routes, Low: ${t.filter((x) => x === "low").length} routes. Current hour: ${new Date().getHours()}:00.`;
+    // Describe the PLANNED trip, not the current clock — the assistant was being
+    // told "Current hour: 22:00" for a trip the user is taking at 7am.
+    const anyPeak = routes.some((r) => r.peak);
+    trafficData =
+      `Heavy: ${t.filter((x) => x === "heavy").length} routes, Medium: ${t.filter((x) => x === "medium").length} routes, Low: ${t.filter((x) => x === "low").length} routes. ` +
+      (anyPeak
+        ? "This trip falls in rush hour, and the durations shown already include a congestion allowance."
+        : "This trip falls outside rush hour, so the durations are free-flow estimates.");
   }
 
   return {
@@ -1827,7 +1834,11 @@ async function getAIRouteInsights() {
     .join("\n");
 
   const t = routes.map((r) => r.traffic);
-  const trafficData = `Heavy: ${t.filter((x) => x === "heavy").length}, Medium: ${t.filter((x) => x === "medium").length}, Low: ${t.filter((x) => x === "low").length} routes. Current hour: ${new Date().getHours()}:00.`;
+  const trafficData =
+    `Heavy: ${t.filter((x) => x === "heavy").length}, Medium: ${t.filter((x) => x === "medium").length}, Low: ${t.filter((x) => x === "low").length} routes. ` +
+    (routes.some((r) => r.peak)
+      ? "Trip falls in rush hour; durations include a congestion allowance."
+      : "Trip falls outside rush hour; durations are free-flow estimates.");
 
   const routeData = {
     origin: originPlace?.formatted_address || "Your location",
