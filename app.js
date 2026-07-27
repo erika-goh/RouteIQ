@@ -36,6 +36,45 @@ const PROFILE_MAP = {
 // dropped rather than shown (OSRM will happily return a 50-hour walk).
 const MAX_ACTIVE_ACCESS_MIN = 90;
 
+// Rush-hour windows, in minutes past midnight: 07:00–09:59 and 17:00–19:59.
+const PEAK_WINDOWS = [
+  [7 * 60, 10 * 60],
+  [17 * 60, 20 * 60],
+];
+
+// OSRM's public instances return FREE-FLOW durations — no traffic model at all,
+// and the request carries no departure time. These multipliers inflate the road
+// legs when the trip actually overlaps rush hour, so a 7am drive isn't costed at
+// 2pm speeds. Walking and cycling are unaffected by congestion.
+const PEAK_DELAY_FACTOR = {
+  DRIVING: 1.3,
+  TRANSIT: 1.15, // buses share the road, so they slow too, just less
+  WALKING: 1,
+  BICYCLING: 1,
+};
+
+// Does a trip occupying [startMin, endMin] overlap a rush-hour window? Trips are
+// checked as an interval rather than a single instant, because a 06:55 departure
+// arriving 07:45 is a peak trip even though it starts before the window.
+function overlapsPeak(startMin, endMin) {
+  if (!Number.isFinite(startMin) || !Number.isFinite(endMin)) return false;
+  // Normalise a trip that began "yesterday" (negative) into the same day.
+  const a = startMin < 0 ? 0 : startMin;
+  const b = Math.min(endMin, 24 * 60);
+  return PEAK_WINDOWS.some(([from, to]) => a < to && b > from);
+}
+
+// The window the trip actually occupies. When the user gave a class/arrival time
+// we plan around THAT — planning a 08:00 lecture at 10pm must not be costed as a
+// quiet 10pm trip, which is exactly what keying off the current clock did.
+function tripWindowMinutes(arrivalMin, freeFlowMin) {
+  if (Number.isFinite(arrivalMin)) {
+    return { startMin: arrivalMin - freeFlowMin, endMin: arrivalMin };
+  }
+  const startMin = nowMinutes();
+  return { startMin, endMin: startMin + freeFlowMin };
+}
+
 // Inline SVG icons (modern, monochrome via currentColor)
 const ICONS = {
   ai: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.7 5.6L19 9l-5.3 1.4L12 16l-1.7-5.6L5 9l5.3-1.4z"/><circle cx="18.5" cy="17.5" r="1.6"/></svg>',
@@ -606,9 +645,11 @@ async function findRoutes() {
       return;
     }
 
-    const now = new Date();
-    const hour = now.getHours();
-    const peak = (hour >= 7 && hour <= 9) || (hour >= 17 && hour <= 19);
+    // Plan against the TRIP's time, not the moment the search happens to run.
+    const arrivalField = document.getElementById("arrival-time").value;
+    const plannedArrivalMin = /^\d{1,2}:\d{2}$/.test(arrivalField)
+      ? hhmmToMin(arrivalField)
+      : null;
 
     // Fetch REAL live departures once per unique station (parallel), then reuse.
     const uniqueCodes = [...new Set(legs.map((l) => l.station.code))];
@@ -665,6 +706,37 @@ async function findRoutes() {
       );
       const totalKm = accessKm + transitKm;
 
+      // Decide peak from the window this trip actually occupies, using the
+      // free-flow estimate to locate it, then inflate the road legs. The
+      // adjusted durations are what get stored, so ranking, "leave by" and the
+      // arrival estimate all move with congestion instead of a label doing
+      // nothing.
+      const freeFlowMin =
+        routeToStation.duration + (routeFromStation?.duration || 0);
+      const { startMin, endMin } = tripWindowMinutes(
+        plannedArrivalMin,
+        freeFlowMin,
+      );
+      const peak = overlapsPeak(startMin, endMin);
+
+      if (peak) {
+        const accessFactor = PEAK_DELAY_FACTOR[accessMode] ?? 1;
+        if (accessFactor !== 1) {
+          routeToStation.freeFlowDuration = routeToStation.duration;
+          routeToStation.duration = Math.max(
+            1,
+            Math.round(routeToStation.duration * accessFactor),
+          );
+        }
+        if (routeFromStation) {
+          routeFromStation.freeFlowDuration = routeFromStation.duration;
+          routeFromStation.duration = Math.max(
+            1,
+            Math.round(routeFromStation.duration * PEAK_DELAY_FACTOR.TRANSIT),
+          );
+        }
+      }
+
       // Driving is most affected by peak-hour congestion; active modes least.
       let traffic = "low";
       if (peak) {
@@ -691,6 +763,7 @@ async function findRoutes() {
         travelMode: effMode,
         totalDuration: totalDuration,
         totalKm: totalKm,
+        peak: peak,
         summary: `${effMode} to ${leg.station.name} (${routeToStation.distance}) • Bus at ${busTime}`,
         co2: co2,
         traffic: traffic,
@@ -917,11 +990,15 @@ function displayRoutes() {
             </div>
           </div>
 
-          <div class="route-traffic ${route.traffic || "low"}">
+          <div class="route-traffic ${route.traffic || "low"}" title="${
+            route.peak
+              ? "Your trip falls in rush hour (07:00–10:00 / 17:00–20:00), so the times above already include a congestion allowance."
+              : "Your trip falls outside rush hour, so these are free-flow travel times."
+          }">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
             </svg>
-            Traffic: ${route.traffic ? route.traffic.charAt(0).toUpperCase() + route.traffic.slice(1) : "Low"}
+            Traffic: ${route.traffic ? route.traffic.charAt(0).toUpperCase() + route.traffic.slice(1) : "Low"}${route.peak ? " · rush-hour allowance included" : ""}
           </div>
 
           <div class="route-co2 ${co2Value > 0.05 ? "savings" : ""}">
