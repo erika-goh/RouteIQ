@@ -124,6 +124,7 @@ function initializeApp() {
   handleDestinationType();
   renderCampusChips();
   Gamification.init();
+  Profile.init();
   GroupTrip.init();
 
   // Service alerts are NOT loaded globally anymore — they're fetched per chosen

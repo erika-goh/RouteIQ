@@ -60,20 +60,24 @@
           </svg>
           <span>Route<span class="logo-iq">IQ</span></span>
         </div>
-        <button class="ai-assist-btn" id="ai-toggle">
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M12 2L2 7l10 5 10-5-10-5z" />
-            <path d="M2 17l10 5 10-5M2 12l10 5 10-5" />
-          </svg>
-          AI Assistant
-        </button>
+        <div class="header-right">
+          <!-- Trainer profile chip (rendered by profile.js) -->
+          <button class="profile-chip" id="profile-chip" title="Trainer profile" aria-label="Open trainer profile"></button>
+          <button class="ai-assist-btn" id="ai-toggle">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5M2 12l10 5 10-5" />
+            </svg>
+            AI Assistant
+          </button>
+        </div>
       </div>
     </header>
 
@@ -141,6 +145,10 @@
               <div class="level-bar-fill" id="progress-bar-fill"></div>
             </div>
             <div class="badges-grid" id="progress-badges"></div>
+            <button class="profile-open-btn" id="profile-open-sidebar" type="button">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              View full profile
+            </button>
           </div>
 
           <!-- Trip Planner -->
@@ -463,12 +471,22 @@
       <p>Finding best routes...</p>
     </div>
 
+    <!-- Trainer Profile (populated by profile.js) -->
+    <div class="profile-overlay" id="profile-overlay">
+      <div class="profile-scrim" id="profile-scrim"></div>
+      <div class="profile-modal" role="dialog" aria-modal="true" aria-label="Trainer profile">
+        <button class="profile-close" id="profile-close" aria-label="Close profile">×</button>
+        <div class="profile-body" id="profile-body"></div>
+      </div>
+    </div>
+
     <!-- Scripts -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="config.js"></script>
     <script src="go-transit-api.js"></script>
     <script src="gemini.js"></script>
     <script src="gamification.js"></script>
+    <script src="profile.js"></script>
     <script src="group-trip.js"></script>
     <script src="app.js"></script>
     <script src="agent-flow.js"></script>

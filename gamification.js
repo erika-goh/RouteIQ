@@ -236,6 +236,57 @@ const Gamification = (() => {
     }).join("");
     const earnedCount = BADGES.filter((b) => snap._state.unlocked.includes(b.id)).length;
     document.getElementById("progress-badge-count").textContent = `${earnedCount}/${BADGES.length}`;
+
+    // Keep the standalone trainer profile (profile.js) in sync when present.
+    if (typeof Profile !== "undefined" && Profile.refresh) Profile.refresh();
+  }
+
+  // Full computed snapshot for the standalone profile UI. Everything profile.js
+  // needs to render without reaching into this module's internals.
+  function data() {
+    const snap = snapshot();
+    syncUnlocked(snap);
+    const x = xp(snap);
+    const lvl = levelFor(x);
+    const cur = LEVELS[lvl];
+    const next = LEVELS[lvl + 1];
+    const curXp = x - cur.xp;
+    const span = next ? next.xp - cur.xp : 0;
+    const pct = next ? Math.min(100, Math.round((curXp / span) * 100)) : 100;
+    const badges = BADGES.map((b) => ({
+      id: b.id,
+      icon: b.icon,
+      name: b.name,
+      desc: descOf(b, snap),
+      earned: snap._state.unlocked.includes(b.id),
+    }));
+    const reroutes =
+      typeof lifetimeStats !== "undefined" ? lifetimeStats.reroutes || 0 : 0;
+    return {
+      xp: x,
+      level: lvl,
+      levelNum: lvl + 1,
+      levelName: cur.name,
+      nextName: next ? next.name : null,
+      nextXp: next ? next.xp : null,
+      curXp,
+      span,
+      pct,
+      maxed: !next,
+      streak: snap.streak,
+      longestStreak: snap.longestStreak,
+      badges,
+      earnedCount: badges.filter((b) => b.earned).length,
+      total: badges.length,
+      titles: LEVELS.slice(0, lvl + 1).map((l) => l.name), // titles you've earned
+      stats: {
+        trips: snap.trips,
+        timeSaved: snap.timeSaved,
+        co2Saved: snap.co2Saved,
+        reroutes,
+        stations: snap.stations,
+      },
+    };
   }
 
   function toast(title, body, iconSvg) {
@@ -263,7 +314,7 @@ const Gamification = (() => {
     render();
   }
 
-  return { init, recordTrip, render };
+  return { init, recordTrip, render, data };
 })();
 
 if (typeof module !== "undefined" && module.exports) {
